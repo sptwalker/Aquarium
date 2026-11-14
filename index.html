@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aquarium</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <div id="hud">
+      <div id="hint">移动鼠标逗鱼 · 点击水面投喂 · 拖拽环视</div>
+      <div id="panel">
+        <button data-q="high">高</button>
+        <button data-q="mid">中</button>
+        <button data-q="low">低</button>
+        <span id="food">🍤 0</span>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
