@@ -66,6 +66,7 @@ export class School {
   }
 
   scare(at: THREE.Vector3, strength = 1) {
+    this.interest.copy(at);   // remember the source so fleeing points away from it
     for (const f of this.fish) {
       const d = f.pos.distanceTo(at);
       if (d < 4.2) {
@@ -108,9 +109,9 @@ export class School {
         const o = this.fish[j];
         const dv = f.pos.clone().sub(o.pos);
         const dist = dv.length();
-        const minD = 0.95 * f.size;
+        const minD = 1.9 * f.size;
         if (dist < minD && dist > 1e-4) {
-          desired.addScaledVector(dv.normalize(), (1 - dist / minD) * 2.6);
+          desired.addScaledVector(dv.normalize(), (1 - dist / minD) * 3.2);
         }
       }
 
@@ -178,8 +179,8 @@ export class School {
         f.focus = Math.max(0, f.focus - dt * 1.8);
       }
 
-      // ---- fear: flee from the interest point
-      if (f.fear > 0.01 && this.interest) {
+      // ---- fear: flee from whatever startled the school
+      if (f.fear > 0.01) {
         const away = f.pos.clone().sub(this.interest).setY(0.1).normalize();
         desired.addScaledVector(away, f.fear * 4.5);
         f.focus = 0;

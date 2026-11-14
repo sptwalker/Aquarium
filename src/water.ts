@@ -320,6 +320,11 @@ export class Bubbles {
     this.mesh.renderOrder = 7;
   }
 
+  /** Live particle budget for quality switches. */
+  setCount(n: number) {
+    this.mesh.count = Math.min(n, this.mesh.instanceMatrix.count);
+  }
+
   update(dt: number, sh: Shared) {
     (this.mesh.material as THREE.ShaderMaterial).uniforms.uTime.value = sh.uTime.value;
     (this.mesh.material as THREE.ShaderMaterial).uniforms.uSunDir.value.copy(sh.uSunDir.value);
@@ -405,5 +410,10 @@ export class Dust {
 
   update(t: number) {
     (this.mesh.material as THREE.ShaderMaterial).uniforms.uTime.value = t;
+  }
+
+  setCount(n: number) {
+    const total = this.mesh.geometry.attributes.position.count;
+    this.mesh.geometry.setDrawRange(0, Math.min(n, total));
   }
 }

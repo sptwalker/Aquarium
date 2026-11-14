@@ -220,8 +220,8 @@ export class Post {
   private w = 1;
   private h = 1;
 
-  readonly useDof: boolean;
-  readonly useBloom: boolean;
+  useDof: boolean;
+  useBloom: boolean;
 
   constructor(q: Quality) {
     this.useDof = q !== 'low';
@@ -274,7 +274,7 @@ export class Post {
       tBloom: { value: null },
       tRays: { value: null },
       uTime: { value: 0 },
-      uExposure: { value: 0.62 },
+      uExposure: { value: 0.50 },
       uBloom: { value: 0.30 },
       uRays: { value: 0.55 },
       uRes: { value: new THREE.Vector2(1, 1) },
@@ -310,6 +310,24 @@ export class Post {
       this.bloomUp.push(hdrTarget(mw, mh));
     }
     this.composite.u.uRes.value.set(W, H);
+  }
+
+  /** Switching tiers rebuilds the bloom chain without recreating the renderer. */
+  setQuality(q: Quality) {
+    this.useDof = q !== 'low';
+    this.useBloom = q !== 'low';
+    for (const t of [...this.bloomDown, ...this.bloomUp]) t.dispose();
+    this.bloomDown = [];
+    this.bloomUp = [];
+    const hw = Math.max(2, this.w >> 1), hh = Math.max(2, this.h >> 1);
+    let mw = hw, mh = hh;
+    for (let i = 0; i < (this.useBloom ? 5 : 0); i++) {
+      mw = Math.max(2, mw >> 1);
+      mh = Math.max(2, mh >> 1);
+      this.bloomDown.push(hdrTarget(mw, mh));
+      this.bloomUp.push(hdrTarget(mw, mh));
+    }
+    this.composite.u.uBloom.value = this.useBloom ? 0.50 : 0.0;
   }
 
   render(

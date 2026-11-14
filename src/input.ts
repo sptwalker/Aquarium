@@ -18,6 +18,8 @@ export class Input {
     clicked: false,
     pointerInside: false,
   };
+  /** timestamp of the last real pointer activity, for idle camera drift */
+  lastActivity = 0;
 
   private ray = new THREE.Raycaster();
   private plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -WATER_Y);
@@ -39,10 +41,12 @@ export class Input {
     const r = this.el.getBoundingClientRect();
     this.state.ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     this.state.pointerInside = true;
+    this.lastActivity = performance.now() / 1000;
   };
 
   private onDown = () => {
     this.state.clicked = true;
+    this.lastActivity = performance.now() / 1000;
   };
 
   private onLeave = () => {

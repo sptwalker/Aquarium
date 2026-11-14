@@ -144,6 +144,10 @@ function applyQuality(q: Quality) {
   if (q === quality) return;
   quality = q;
   hud.setQuality(q);
+  const preset = QUALITY[q];
+  post.setQuality(q);
+  bubbles.setCount(preset.bubbles);
+  dust.setCount(preset.dust);
   resize();
 }
 
@@ -152,6 +156,7 @@ declare global {
   interface Window {
     __ready?: boolean;
     __stats?: unknown;
+    __quality?: () => Record<string, unknown> & { name: string };
     __probe?: () => {
       foodLive: number;
       hungerSum: number;
@@ -242,6 +247,8 @@ function updateFoods(dt: number, t: number) {
 }
 
 const tmpQuat = new THREE.Quaternion();
+const flipQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+const tmpMat = new THREE.Matrix4();
 const upVec = new THREE.Vector3(0, 1, 0);
 const lookTarget = new THREE.Vector3();
 
@@ -255,11 +262,10 @@ function updateFish(dt: number, t: number) {
     // face along velocity, bank into turns
     if (b.vel.lengthSq() > 1e-5) {
       lookTarget.copy(b.pos).add(b.vel);
-      const m = new THREE.Matrix4();
-      m.lookAt(b.pos, lookTarget, upVec);
-      tmpQuat.setFromRotationMatrix(m);
+      tmpMat.lookAt(b.pos, lookTarget, upVec);
+      tmpQuat.setFromRotationMatrix(tmpMat);
       // lookAt makes -Z face the target; our fish noses along +Z
-      tmpQuat.multiply(new THREE.Quaternion().setFromAxisAngle(upVec, Math.PI));
+      tmpQuat.multiply(flipQuat);
       v.group.quaternion.slerp(tmpQuat, 1 - Math.exp(-dt * 6));
     }
     // gentle vertical tilt from swimming direction handled by lookAt
@@ -274,8 +280,9 @@ function updateFish(dt: number, t: number) {
   }
 }
 
+const sunOffset = new THREE.Vector3(0, 2, 0);
 function updateLightScreen() {
-  sunScreenPos.copy(shared.uSunDir.value).multiplyScalar(40).add(new THREE.Vector3(0, 2, 0));
+  sunScreenPos.copy(shared.uSunDir.value).multiplyScalar(40).add(sunOffset);
   sunScreenPos.project(camera);
   lightScreen.set(sunScreenPos.x * 0.5 + 0.5, sunScreenPos.y * 0.5 + 0.5);
   lightScreen.x = THREE.MathUtils.clamp(lightScreen.x, 0.05, 0.95);
@@ -287,6 +294,12 @@ function frame() {
   const dt = Math.min(0.05, clock.getDelta());
   elapsed += dt;
   const t = elapsed;
+
+  // after a few idle seconds the camera drifts slowly around the tank
+  if (performance.now() / 1000 - input.lastActivity > 6) {
+    camera.position.applyAxisAngle(upVec, dt * 0.035);
+    camera.lookAt(controls.target);
+  }
 
   controls.update();
   input.update(t);
@@ -347,6 +360,10 @@ function frame() {
 }
 
 window.__ready = true;
+window.__quality = () => ({ ...QUALITY[quality], name: quality });
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) clock.getDelta();   // drop the gap so physics doesn't jump
+});
 window.__probe = () => ({
   foodLive: foods.filter((f) => f.alive).length,
   hungerSum: school.fish.reduce((a, f) => a + f.hunger, 0),

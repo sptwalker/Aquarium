@@ -17,34 +17,34 @@ type FishStyle = {
 const STYLES: Record<FishSpecies, FishStyle> = {
   fantail: {
     length: 1.62, girth: 0.35,
-    hueA: new THREE.Vector3(1.0, 0.36, 0.055),
-    hueB: new THREE.Vector3(0.95, 0.19, 0.035),
-    belly: new THREE.Vector3(1.0, 0.94, 0.86),
-    finTint: new THREE.Vector3(1.0, 0.52, 0.26),
+    hueA: new THREE.Vector3(1.0, 0.26, 0.020),
+    hueB: new THREE.Vector3(0.92, 0.10, 0.014),
+    belly: new THREE.Vector3(1.0, 0.92, 0.82),
+    finTint: new THREE.Vector3(1.0, 0.42, 0.18),
     wen: 0.0,
   },
   oranda: {
     length: 1.48, girth: 0.40,
-    hueA: new THREE.Vector3(0.98, 0.30, 0.05),
-    hueB: new THREE.Vector3(0.90, 0.13, 0.03),
-    belly: new THREE.Vector3(1.0, 0.93, 0.84),
-    finTint: new THREE.Vector3(1.0, 0.60, 0.34),
+    hueA: new THREE.Vector3(0.98, 0.21, 0.018),
+    hueB: new THREE.Vector3(0.86, 0.07, 0.012),
+    belly: new THREE.Vector3(1.0, 0.90, 0.78),
+    finTint: new THREE.Vector3(1.0, 0.50, 0.24),
     wen: 1.0,
   },
   ryukin: {
     length: 1.40, girth: 0.42,
-    hueA: new THREE.Vector3(0.98, 0.52, 0.11),
-    hueB: new THREE.Vector3(0.93, 0.55, 0.42),
-    belly: new THREE.Vector3(1.0, 0.96, 0.90),
-    finTint: new THREE.Vector3(1.0, 0.72, 0.50),
+    hueA: new THREE.Vector3(0.97, 0.40, 0.045),
+    hueB: new THREE.Vector3(0.88, 0.44, 0.30),
+    belly: new THREE.Vector3(1.0, 0.95, 0.88),
+    finTint: new THREE.Vector3(1.0, 0.64, 0.38),
     wen: 0.0,
   },
   comet: {
     length: 1.95, girth: 0.25,
-    hueA: new THREE.Vector3(1.0, 0.41, 0.06),
-    hueB: new THREE.Vector3(0.98, 0.62, 0.10),
-    belly: new THREE.Vector3(1.0, 0.96, 0.90),
-    finTint: new THREE.Vector3(1.0, 0.55, 0.25),
+    hueA: new THREE.Vector3(1.0, 0.30, 0.020),
+    hueB: new THREE.Vector3(0.97, 0.52, 0.030),
+    belly: new THREE.Vector3(1.0, 0.95, 0.87),
+    finTint: new THREE.Vector3(1.0, 0.46, 0.16),
     wen: 0.0,
   },
 };
@@ -148,7 +148,9 @@ function makeFinGeometry(
         // reads as a detached shape floating behind the body.
         const notch = 1.0 - 0.40 * Math.exp(-s * s * 7.0);
         const rootZ = -L * 0.46;
-        const z = rootZ - d * L * 0.44 * veined * notch;
+        // comets carry a long flowing tail; fancy varieties a shorter fan
+        const tailSpan = L * (style.girth < 0.3 ? 0.62 : 0.42);
+        const z = rootZ - d * tailSpan * veined * notch;
         const y = s * Math.pow(d, 0.82) * L * 0.30 * (1.0 + 0.10 * Math.sin(Math.abs(s) * 2.6));
         const x = s * d * L * 0.09 + d * d * Math.cos(s * 1.9) * L * 0.05;
         return new THREE.Vector3(x, y + style.girth * 0.02, z);
@@ -331,7 +333,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
         // wrapped diffuse approximates subsurface scattering in the thin flesh
         float wrap = clamp((ndl + 0.55) / 1.55, 0.0, 1.0);
         vec3 sss = uHueA * vec3(1.0, 0.28, 0.18) * pow(clamp(ndl * 0.5 + 0.5, 0.0, 1.0), 3.0) * 0.5;
-        vec3 lit = col * (uSunColor * wrap * (0.12 + 2.1 * casc) * atten + vec3(0.018, 0.028, 0.032));
+        vec3 lit = col * (uSunColor * wrap * (0.10 + 1.25 * casc) * atten + vec3(0.018, 0.028, 0.032));
         lit += sss * 0.9;
 
         // specular: wet, crisp highlight with iridescence on the rim
@@ -404,10 +406,11 @@ export function makeFish(style: FishStyle, shared: Shared): {
         float fres = pow(1.0 - abs(dot(N, V)), 2.0);
         float casc = causticSample(vWorld, uTime);
         float atten = exp(-max(0.0, 4.05 - vWorld.y) * 0.1);
-        vec3 col = uFinTint * (0.35 + 1.9 * casc) * atten * (0.45 + ndl * 0.7 + trans);
-        col += uFinTint * fres * 0.28;
-        col += vec3(1.0) * pow(max(0.0, dot(reflect(-L, N), V)), 60.0) * 0.25;
-        float a = mem * (0.55 + 0.35 * fres + trans * 0.15);
+        vec3 col = uFinTint * (0.16 + 0.80 * casc) * atten * (0.45 + ndl * 0.7 + trans);
+        col += uFinTint * fres * 0.22;
+        col += vec3(1.0) * pow(max(0.0, dot(reflect(-L, N), V)), 60.0) * 0.10;
+        col = min(col, vec3(1.6));
+        float a = mem * (0.30 + 0.30 * fres + trans * 0.12);
         a *= smoothstep(1.0, 0.93, uv.y);        // fade at the far tip
         a *= 0.35 + 0.65 * smoothstep(0.0, 0.28, uv.y);  // rooted edge is solid
         gl_FragColor = vec4(col, clamp(a, 0.0, 0.90));

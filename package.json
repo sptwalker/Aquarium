@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "shot": "node tools/shot.mjs"
+    "shot": "node tools/shot.mjs",
+    "test:interact": "node tools/interact.mjs",
+    "test:quality": "node tools/quality.mjs"
   },
   "dependencies": {
     "three": "^0.187.0"
