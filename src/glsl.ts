@@ -59,7 +59,9 @@ uniform vec3 uSunColor;
 float causticSample(vec3 wp, float t){
   vec2 uv = wp.xz * 0.155 + vec2(0.5);
   uv.y += sin(wp.y * 0.6 + t * 0.2) * 0.006;
-  return texture2D(uCaustic, uv).r;
+  float c = texture2D(uCaustic, uv).r;
+  // sharpen: the bright filaments are what read as caustics, not the average
+  return smoothstep(0.15, 0.95, c) * 1.35;
 }
 // Light reaching a point, attenuated by the water column above it.
 vec3 tankLight(vec3 wp, float t){

@@ -108,8 +108,8 @@ export function makeSand(sh: Shared): THREE.Group {
         float casc = causticSample(vWorld, uTime);
         float depthBelow = max(0.0, 4.05 - vWorld.y);
         float atten = exp(-depthBelow * 0.13);
-        vec3 lit = sand * (uSunColor * ndl * (0.18 + 1.45 * casc) * atten);
-        lit += sand * vec3(0.020, 0.032, 0.038);   // ambient
+        vec3 lit = sand * (uSunColor * ndl * (0.07 + 2.4 * casc) * atten);
+        lit += sand * vec3(0.014, 0.024, 0.028);   // ambient
         gl_FragColor = vec4(lit, 1.0);
       }
     `,
@@ -306,9 +306,9 @@ function makeDriftwood(sh: Shared): THREE.Mesh {
 // Plants (instanced ribbons)
 // ---------------------------------------------------------------------------
 export function makePlants(sh: Shared): THREE.Mesh {
-  const count = 46;
-  const segs = 10;
-  const gw = 0.09;
+  const count = 54;
+  const segs = 12;
+  const gw = 0.22;
   const base = new THREE.PlaneGeometry(gw, 1, 1, segs);
   base.translate(0, 0.5, 0);
 
@@ -323,15 +323,18 @@ export function makePlants(sh: Shared): THREE.Mesh {
   let s = 12345;
   const rnd = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
   for (let i = 0; i < count; i++) {
-    const ang = rnd() * Math.PI * 2;
-    const rad = 1.4 + rnd() * 2.5;
-    offsets[i * 3 + 0] = Math.cos(ang) * rad * 0.85;
+    // cluster the planting at the back corners so the fish stay readable
+    const lane = rnd();
+    const x = lane < 0.4 ? -TANK.hw + 0.5 + rnd() * 1.7
+      : lane < 0.8 ? TANK.hw - 0.5 - rnd() * 1.7
+      : (rnd() - 0.5) * TANK.hw * 1.2;
+    offsets[i * 3 + 0] = x;
     offsets[i * 3 + 1] = SAND_TOP - 0.05 + rnd() * 0.1;
-    offsets[i * 3 + 2] = Math.sin(ang) * rad * 0.55;
-    params[i * 4 + 0] = 1.1 + rnd() * 2.4;      // height
+    offsets[i * 3 + 2] = -TANK.hd + 0.35 + rnd() * 1.1;
+    params[i * 4 + 0] = 0.8 + rnd() * 2.2;      // height
     params[i * 4 + 1] = rnd() * 6.28;           // phase
-    params[i * 4 + 2] = 0.7 + rnd() * 0.9;      // sway
-    params[i * 4 + 3] = 0.55 + rnd() * 0.75;    // width
+    params[i * 4 + 2] = 0.6 + rnd() * 0.9;      // sway
+    params[i * 4 + 3] = 0.6 + rnd() * 0.7;      // width
   }
   geo.setAttribute('aOffset', new THREE.InstancedBufferAttribute(offsets, 3));
   geo.setAttribute('aParams', new THREE.InstancedBufferAttribute(params, 4));
@@ -358,9 +361,9 @@ export function makePlants(sh: Shared): THREE.Mesh {
 
         // ribbon tapers and curves
         float t = p.y;
-        p.x *= mix(1.0, 0.35, t);
-        p.x += sin(uTime * 0.9 + phase + t * 2.2) * sway * 0.10 * t * t;
-        p.z += cos(uTime * 0.7 + phase * 1.3 + t * 1.7) * sway * 0.07 * t * t;
+        p.x *= mix(1.0, 0.18, t) * aParams.w;
+        p.x += sin(uTime * 0.9 + phase + t * 2.2) * sway * 0.14 * t * t;
+        p.z += cos(uTime * 0.7 + phase * 1.3 + t * 1.7) * sway * 0.10 * t * t;
         p.y *= h;
 
         // twist
@@ -383,17 +386,17 @@ export function makePlants(sh: Shared): THREE.Mesh {
       varying float vSide;
       void main(){
         float vein = smoothstep(0.55, 1.0, noise2(vec2(vSide * 3.0, vH * 26.0)));
-        vec3 colA = vec3(0.075, 0.20, 0.075);
-        vec3 colB = vec3(0.16, 0.34, 0.11);
-        vec3 col = mix(colA, colB, vH * 0.85 + vein * 0.3);
-        col *= 0.8 + 0.35 * fbm3(vec2(vSide * 2.0, vH * 9.0));
+        vec3 colA = vec3(0.028, 0.075, 0.030);
+        vec3 colB = vec3(0.070, 0.145, 0.048);
+        vec3 col = mix(colA, colB, vH * 0.85 + vein * 0.25);
+        col *= 0.75 + 0.35 * fbm3(vec2(vSide * 2.0, vH * 9.0));
 
         vec3 N = normalize(vNormal);
         float ndl = abs(dot(N, uSunDir)) * 0.7 + 0.3;
         float casc = causticSample(vWorld, uTime);
-        float atten = exp(-max(0.0, 4.05 - vWorld.y) * 0.13);
-        vec3 lit = col * (uSunColor * ndl * (0.2 + 1.3 * casc) * atten);
-        lit += col * vec3(0.014, 0.028, 0.028);
+        float atten = exp(-max(0.0, 4.05 - vWorld.y) * 0.2);
+        vec3 lit = col * (uSunColor * ndl * (0.10 + 1.5 * casc) * atten);
+        lit += col * vec3(0.020, 0.036, 0.034);
         gl_FragColor = vec4(lit, 1.0);
       }
     `,

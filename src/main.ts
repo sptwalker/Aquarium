@@ -152,6 +152,13 @@ declare global {
   interface Window {
     __ready?: boolean;
     __stats?: unknown;
+    __probe?: () => {
+      foodLive: number;
+      hungerSum: number;
+      focusSum: number;
+      fearSum: number;
+      fish: number[][];
+    };
   }
 }
 
@@ -340,6 +347,13 @@ function frame() {
 }
 
 window.__ready = true;
+window.__probe = () => ({
+  foodLive: foods.filter((f) => f.alive).length,
+  hungerSum: school.fish.reduce((a, f) => a + f.hunger, 0),
+  focusSum: school.fish.reduce((a, f) => a + f.focus, 0),
+  fearSum: school.fish.reduce((a, f) => a + f.fear, 0),
+  fish: school.fish.map((f) => f.pos.toArray().map((v) => +v.toFixed(2))),
+});
 window.__stats = {
     get fps() { return Math.round(fps); },
     fish: fishViews.length,

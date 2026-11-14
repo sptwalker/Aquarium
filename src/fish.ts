@@ -16,7 +16,7 @@ type FishStyle = {
 
 const STYLES: Record<FishSpecies, FishStyle> = {
   fantail: {
-    length: 1.55, girth: 0.42,
+    length: 1.62, girth: 0.35,
     hueA: new THREE.Vector3(1.0, 0.36, 0.055),
     hueB: new THREE.Vector3(0.95, 0.19, 0.035),
     belly: new THREE.Vector3(1.0, 0.94, 0.86),
@@ -24,7 +24,7 @@ const STYLES: Record<FishSpecies, FishStyle> = {
     wen: 0.0,
   },
   oranda: {
-    length: 1.42, girth: 0.50,
+    length: 1.48, girth: 0.40,
     hueA: new THREE.Vector3(0.98, 0.30, 0.05),
     hueB: new THREE.Vector3(0.90, 0.13, 0.03),
     belly: new THREE.Vector3(1.0, 0.93, 0.84),
@@ -32,7 +32,7 @@ const STYLES: Record<FishSpecies, FishStyle> = {
     wen: 1.0,
   },
   ryukin: {
-    length: 1.34, girth: 0.52,
+    length: 1.40, girth: 0.42,
     hueA: new THREE.Vector3(0.98, 0.52, 0.11),
     hueB: new THREE.Vector3(0.93, 0.55, 0.42),
     belly: new THREE.Vector3(1.0, 0.96, 0.90),
@@ -40,7 +40,7 @@ const STYLES: Record<FishSpecies, FishStyle> = {
     wen: 0.0,
   },
   comet: {
-    length: 1.85, girth: 0.29,
+    length: 1.95, girth: 0.25,
     hueA: new THREE.Vector3(1.0, 0.41, 0.06),
     hueB: new THREE.Vector3(0.98, 0.62, 0.10),
     belly: new THREE.Vector3(1.0, 0.96, 0.90),
@@ -50,18 +50,24 @@ const STYLES: Record<FishSpecies, FishStyle> = {
 };
 
 function bodyProfile(z: number): number {
-  // z in [-0.5, 0.5]; 0.5 = nose
+  // z in [-0.5, 0.5]; 0.5 = nose. Returns a 0..1 radius multiplier.
+  // Egg-shaped goldfish body: deep behind the head, tapering hard into the
+  // caudal peduncle, with a short rounded snout.
   const t = THREE.MathUtils.clamp((z + 0.5) / 1.0, 0, 1);
-  if (t > 0.72) {
-    const k = (t - 0.72) / 0.28;
-    return Math.sqrt(Math.max(0, 1 - k * k)) * 0.96 + 0.04;
+  if (t > 0.86) {
+    // snout: quick but smooth taper to a small mouth
+    const k = (t - 0.86) / 0.14;
+    return Math.sqrt(Math.max(0, 1 - k * k)) * 0.52 + 0.10;
   }
-  if (t > 0.28) {
-    const k = (t - 0.28) / 0.44;
-    return 0.82 + 0.26 * Math.sin(k * Math.PI * 0.85) - k * 0.16;
+  if (t > 0.16) {
+    // widest just behind the gill cover (t≈0.62), gently narrowing forward
+    const k = (t - 0.16) / 0.70;
+    const peak = Math.sin(Math.pow(k, 0.75) * Math.PI * 0.92);
+    return 0.44 + 0.58 * peak;
   }
-  const k = (0.28 - t) / 0.28;
-  return Math.max(0.06, 0.66 * Math.sqrt(Math.max(0, 1 - k * k)));
+  // caudal peduncle: thin, then a small flare where the tail root begins
+  const k = t / 0.16;
+  return 0.10 + 0.34 * k * k;
 }
 
 function buildBodyGeometry(style: FishStyle, segs = 46, radial = 22): THREE.BufferGeometry {
@@ -79,20 +85,19 @@ function buildBodyGeometry(style: FishStyle, segs = 46, radial = 22): THREE.Buff
     for (let j = 0; j < cols; j++) {
       const a = (j / radial) * Math.PI * 2;
       const ca = Math.cos(a), sa = Math.sin(a);
-      // cross-section: slightly flattened, deeper belly
-      let x = ca * prof * 0.92;
-      let y = sa * prof;
+      // cross-section: laterally compressed (tall, narrow), deeper belly
+      let x = ca * prof * 0.58;
+      let y = sa * prof * 1.02;
       // dorsal ridge + belly curve
-      y += Math.max(0, sa) * prof * 0.22;
-      y -= Math.max(0, -sa) * prof * 0.10;
-      // head widens vertically, mouth pinches
-      const headK = THREE.MathUtils.smoothstep(t, 0.55, 1.0);
-      y *= 1.0 - headK * 0.18;
-      x *= 1.0 + headK * 0.06;
+      y += Math.max(0, sa) * prof * 0.14;
+      y -= Math.max(0, -sa) * prof * 0.18;
+      // head narrows toward the snout and rounds off
+      const headK = THREE.MathUtils.smoothstep(t, 0.62, 1.0);
+      y *= 1.0 - headK * 0.30;
+      x *= 1.0 - headK * 0.28;
       // mouth indentation
-      const mouth = THREE.MathUtils.smoothstep(t, 0.9, 1.0);
-      y -= mouth * Math.abs(Math.cos(a)) * prof * 0.16;
-      z += mouth * prof * 0.10 * Math.cos(a);
+      const mouth = THREE.MathUtils.smoothstep(t, 0.90, 1.0);
+      y -= mouth * Math.abs(Math.cos(a)) * prof * 0.10;
       // subtle asymmetry / organic
       const wob = 1 + 0.02 * Math.sin(a * 5 + u * 22) + 0.012 * Math.sin(a * 9 - u * 13);
       positions.push(x * wob, y * wob, z);
@@ -129,25 +134,29 @@ function makeFinGeometry(
   const shape = (u: number, v: number): THREE.Vector3 => {
     const s = u * 2 - 1; // -1..1 across
     const d = v;        // 0 root .. 1 tip
-    const veined = 1 + 0.035 * Math.sin(s * 26.0);
+    const veined = 1 + 0.012 * Math.sin(s * 26.0);
     switch (kind) {
       case 'dorsal': {
-        const z = -L * 0.08 - u * L * 0.34;
-        const h = (L * 0.26) * Math.sin(Math.min(1, u * 1.12) * Math.PI) * veined;
-        return new THREE.Vector3(s * 0.015, style.girth * 0.80 + d * h, z + Math.sin(s * 3) * 0.02);
+        // soft sail along the back: smooth leading edge, notched trailing edge
+        const z = -L * 0.06 - u * L * 0.36;
+        const arc = Math.max(0, Math.sin(Math.min(1, (u - 0.04) / 0.96) * Math.PI));
+        const h = (L * 0.22) * Math.pow(arc, 0.75) * veined;
+        return new THREE.Vector3(s * 0.012, style.girth * 0.74 + d * h, z + Math.sin(s * 3) * 0.02);
       }
       case 'caudal': {
-        // Two lobes with a notch: the silhouette that reads as "fantail".
-        const notch = 1.0 - 0.45 * Math.exp(-s * s * 6.0);
-        const z = -L * 0.5 - d * L * 0.40 * veined * notch;
-        const y = s * d * L * 0.235 * (1.0 + 0.18 * Math.sin(Math.abs(s) * 2.6));
-        const x = s * d * L * 0.055;
-        return new THREE.Vector3(x, y, z);
+        // Rooted fan: starts at the peduncle (d=0) and flares out, so it never
+        // reads as a detached shape floating behind the body.
+        const notch = 1.0 - 0.40 * Math.exp(-s * s * 7.0);
+        const rootZ = -L * 0.46;
+        const z = rootZ - d * L * 0.44 * veined * notch;
+        const y = s * Math.pow(d, 0.82) * L * 0.30 * (1.0 + 0.10 * Math.sin(Math.abs(s) * 2.6));
+        const x = s * d * L * 0.09 + d * d * Math.cos(s * 1.9) * L * 0.05;
+        return new THREE.Vector3(x, y + style.girth * 0.02, z);
       }
       case 'pectoral': {
-        const z = L * 0.14;
-        const len = L * 0.40 * veined;
-        return new THREE.Vector3(d * len * (0.2 + Math.abs(s)), style.girth * 0.12 + s * d * len * 0.55, z - d * len * 0.55);
+        const z = L * 0.10;
+        const len = L * 0.34 * veined;
+        return new THREE.Vector3(d * len * (0.25 + Math.abs(s) * 0.8), style.girth * 0.05 + s * d * len * 0.62, z - d * len * 0.5);
       }
       case 'anal': {
         const z = -L * 0.30;
@@ -256,28 +265,31 @@ export function makeFish(style: FishStyle, shared: Shared): {
       varying vec3 vLocal;
       varying vec2 vUv;
 
-      // Scale lattice in body-local UV space (u around, v along).
+      // Scale lattice: staggered diamond cells, each with a soft dome normal.
+      // Also returns cell coordinates so the fragment can tint per scale.
       float scaleMask(vec2 uv, out vec2 cell){
-        vec2 g = vec2(uv.x * 22.0, uv.y * 26.0);
+        vec2 g = vec2(uv.x * 26.0, uv.y * 34.0);
+        g.x += step(1.0, mod(floor(g.y), 2.0)) * 0.5;   // brick offset
         vec2 id = floor(g);
         vec2 f = fract(g) - 0.5;
-        float d = length(f * vec2(1.0, 1.15));
+        float d = abs(f.x) * 1.35 + abs(f.y) * 1.05;     // diamond metric
         cell = id;
-        return smoothstep(0.52, 0.30, d) * smoothstep(0.0, 0.10, d);
+        return smoothstep(0.62, 0.34, d);
       }
       vec3 scaleNormal(vec2 uv){
-        vec2 g = vec2(uv.x * 22.0, uv.y * 26.0);
+        vec2 g = vec2(uv.x * 26.0, uv.y * 34.0);
+        g.x += step(1.0, mod(floor(g.y), 2.0)) * 0.5;
         vec2 f = fract(g) - 0.5;
-        float r = length(f * vec2(1.0, 1.15));
-        vec2 dir = normalize(f + 1e-5);
-        return vec3(dir.x, dir.y, 0.0) * smoothstep(0.5, 0.2, r);
+        float d = abs(f.x) * 1.35 + abs(f.y) * 1.05;
+        vec2 dir = sign(f) * vec2(1.35, 1.05);
+        return vec3(dir.x, dir.y, 0.0) * smoothstep(0.58, 0.20, d);
       }
 
       void main(){
         vec2 uv = vUv;
         vec3 N = normalize(vNormal);
 
-        // ---- base colic gradient
+        // ---- base color gradient (nose..tail, back..belly)
         float along = 1.0 - uv.y;                    // 0 nose .. 1 tail
         float up = vLocalNormal.y;                   // -1 belly .. 1 back
         float blotch = fbm3(vec2(uv.x * 5.0 + 3.0, uv.y * 7.0));
@@ -285,15 +297,16 @@ export function makeFish(style: FishStyle, shared: Shared): {
         vec3 col = mix(uHueA, uHueB, smoothstep(0.25, 0.85, blotch + blotch2 * 0.35));
         col = mix(col, col * vec3(1.06, 0.92, 0.86), smoothstep(0.5, 0.9, along) * 0.35);
 
-        float bellyMask = smoothstep(0.12, -0.45, up) * smoothstep(0.95, 0.25, along);
-        col = mix(col, uBelly, bellyMask * 0.92);
+        // the white belly is a narrow underside band, not half the fish
+        float bellyMask = smoothstep(-0.10, -0.62, up) * smoothstep(0.90, 0.30, along);
+        col = mix(col, uBelly, bellyMask * 0.88);
 
-        // ---- scale lattice
+        // ---- scale lattice: very low contrast, it is a sheen not a pattern
         vec2 cell;
         float sm = scaleMask(vec2(uv.x, uv.y * 1.02), cell);
         float scaleHue = hash11(cell.x * 7.31 + cell.y * 3.17);
-        col *= 0.9 + 0.16 * sm;
-        col = mix(col, col * vec3(1.08, 0.98, 0.86), sm * 0.35 * scaleHue);
+        col *= 0.965 + 0.055 * sm;
+        col = mix(col, col * vec3(1.03, 0.995, 0.955), sm * 0.22 * scaleHue);
 
         // ---- oranda wen (bumpy growth on head)
         float head = smoothstep(0.62, 0.95, along);
@@ -305,7 +318,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
         // tangent frame: local x should map to around, local y across
         vec3 T = normalize(cross(N, vec3(0.0, 1.0, 0.0)) + 1e-4);
         vec3 B = normalize(cross(N, T));
-        N = normalize(N + (T * pert.x + B * pert.y) * 0.32 + normalize(vLocal) * wen * 0.4);
+        N = normalize(N + (T * pert.x + B * pert.y) * 0.11 + normalize(vLocal) * wen * 0.4);
 
         // ---- lighting
         vec3 V = normalize(cameraPosition - vWorld);
@@ -318,7 +331,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
         // wrapped diffuse approximates subsurface scattering in the thin flesh
         float wrap = clamp((ndl + 0.55) / 1.55, 0.0, 1.0);
         vec3 sss = uHueA * vec3(1.0, 0.28, 0.18) * pow(clamp(ndl * 0.5 + 0.5, 0.0, 1.0), 3.0) * 0.5;
-        vec3 lit = col * (uSunColor * wrap * (0.30 + 1.7 * casc) * atten + vec3(0.06, 0.10, 0.115));
+        vec3 lit = col * (uSunColor * wrap * (0.12 + 2.1 * casc) * atten + vec3(0.018, 0.028, 0.032));
         lit += sss * 0.9;
 
         // specular: wet, crisp highlight with iridescence on the rim
@@ -326,15 +339,15 @@ export function makeFish(style: FishStyle, shared: Shared): {
         float gloss = 0.0;
         float f0 = 0.028;
         float nh = max(0.0, dot(N, H));
-        gloss = pow(nh, 120.0) * 2.6 + pow(nh, 18.0) * 0.18;
+        gloss = pow(nh, 140.0) * 1.5 + pow(nh, 22.0) * 0.12;
         float fres = pow(1.0 - max(0.0, dot(N, V)), 3.0);
         vec3 irid = 0.5 + 0.5 * cos(vec3(0.0, 2.1, 4.2) + fres * 5.0);
         lit += uSunColor * gloss * (0.85 + 0.45 * (1.0 - sm));
-        lit += irid * fres * 0.16;
+        lit += irid * fres * 0.10;
 
         // ambient reflection of the tank interior
         vec3 R = reflect(-V, N);
-        lit += envColor(R, uSunDir) * fres * 0.5 + f0 * envColor(R, uSunDir) * 0.12;
+        lit += envColor(R, uSunDir) * fres * 0.28 + f0 * envColor(R, uSunDir) * 0.10;
 
         // mouth darkening
         float mouth = smoothstep(0.963, 0.995, uv.y) * smoothstep(0.48, 0.62, uv.x) * smoothstep(0.48, 0.38, abs(uv.x - 0.5) * 2.0);
@@ -378,10 +391,10 @@ export function makeFish(style: FishStyle, shared: Shared): {
       varying vec3 vNormal;
       void main(){
         vec2 uv = vUv;
-        // radial veins from root (v=0) toward tip
-        float veins = smoothstep(0.72, 0.98, sin(uv.x * uFinFreq * 6.28318) * 0.5 + 0.5);
-        float v2 = smoothstep(0.6, 0.98, sin(uv.y * 30.0 + uv.x * 12.0) * 0.5 + 0.5);
-        float mem = mix(0.55, 1.0, veins * 0.7 + v2 * 0.3);
+        // soft rays: broad translucent gradients, no hard stripes
+        float veins = smoothstep(0.2, 0.85, sin(uv.x * uFinFreq * 6.28318) * 0.5 + 0.5);
+        float cross = smoothstep(0.25, 0.9, sin(uv.y * 16.0 + uv.x * 8.0) * 0.5 + 0.5);
+        float mem = mix(0.72, 1.0, veins * 0.6 + cross * 0.4);
 
         vec3 N = normalize(vNormal);
         vec3 V = normalize(cameraPosition - vWorld);
@@ -394,10 +407,10 @@ export function makeFish(style: FishStyle, shared: Shared): {
         vec3 col = uFinTint * (0.35 + 1.9 * casc) * atten * (0.45 + ndl * 0.7 + trans);
         col += uFinTint * fres * 0.28;
         col += vec3(1.0) * pow(max(0.0, dot(reflect(-L, N), V)), 60.0) * 0.25;
-        float a = mem * (0.30 + 0.62 * fres + trans * 0.25);
-        a *= smoothstep(1.0, 0.86, uv.y);        // fade at the far tip
-        a *= smoothstep(0.0, 0.16, uv.y);        // rooted edge is opaque-ish
-        gl_FragColor = vec4(col, clamp(a, 0.0, 0.94));
+        float a = mem * (0.55 + 0.35 * fres + trans * 0.15);
+        a *= smoothstep(1.0, 0.93, uv.y);        // fade at the far tip
+        a *= 0.35 + 0.65 * smoothstep(0.0, 0.28, uv.y);  // rooted edge is solid
+        gl_FragColor = vec4(col, clamp(a, 0.0, 0.90));
       }
     `,
   });
@@ -452,8 +465,8 @@ export function makeFish(style: FishStyle, shared: Shared): {
   });
   for (const s of [1, -1]) {
     const eye = new THREE.Mesh(eyeGeo, eyeMat);
-    eye.position.set(s * style.girth * 0.72, style.girth * 0.30, style.length * 0.34);
-    eye.scale.set(0.7, 1.0, 1.0);
+    eye.position.set(s * style.girth * 0.44, style.girth * 0.30, style.length * 0.33);
+    eye.scale.set(0.55, 1.0, 1.0);
     group.add(eye);
   }
 
