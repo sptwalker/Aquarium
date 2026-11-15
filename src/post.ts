@@ -252,12 +252,12 @@ export class Post {
     this.bright = new FullPass(BRIGHT, {
       tSrc: { value: null },
       uLight: { value: new THREE.Vector2(0.5, 0.85) },
-      uThreshold: { value: 0.75 },
+      uThreshold: { value: 1.15 },
     });
     this.radial = new FullPass(RADIAL, {
       tSrc: { value: null },
       uLight: { value: new THREE.Vector2(0.5, 0.85) },
-      uStrength: { value: 0.5 },
+      uStrength: { value: 0.22 },
     });
     this.blur = new FullPass(BLUR, { tSrc: { value: null }, uDir: { value: new THREE.Vector2() } });
     this.dof = new FullPass(DOF, {
@@ -265,8 +265,8 @@ export class Post {
       tDepth: { value: null },
       uTexel: { value: new THREE.Vector2() },
       uFocus: { value: 11 },
-      uRange: { value: 9 },
-      uMaxBlur: { value: 9 },
+      uRange: { value: 16 },
+      uMaxBlur: { value: 1.6 },
       uNear: { value: 0.1 },
       uFar: { value: 120 },
     });
@@ -276,8 +276,8 @@ export class Post {
       tRays: { value: null },
       uTime: { value: 0 },
       uExposure: { value: 0.50 },
-      uBloom: { value: 0.30 },
-      uRays: { value: 0.55 },
+      uBloom: { value: 0.10 },
+      uRays: { value: 0.20 },
       uRes: { value: new THREE.Vector2(1, 1) },
       uDebug: { value: 0 },
     });
@@ -365,12 +365,14 @@ export class Post {
       lit = this.rtCopy.texture;
     }
 
-    // 4. depth of field
+    // 4. depth of field — only the far background is softened. Focusing on the
+    //    camera distance blurred the fish themselves, which is why a higher
+    //    tier looked worse than a lower one.
     if (this.useDof && !opts.skipDof) {
       this.dof.u.tColor.value = lit;
       this.dof.u.tDepth.value = this.depthTex;
       this.dof.u.uTexel.value.set(1 / this.w, 1 / this.h);
-      this.dof.u.uFocus.value = camera.position.distanceTo(new THREE.Vector3(0, 2.3, 0));
+      this.dof.u.uFocus.value = camera.position.distanceTo(new THREE.Vector3(0, 2.3, 0)) + 6.0;
       this.dof.u.uNear.value = camera.near;
       this.dof.u.uFar.value = camera.far;
       this.dof.render(renderer, this.rtDof);

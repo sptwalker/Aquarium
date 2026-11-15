@@ -44,8 +44,10 @@ export class School {
 
   add(species: FishSpecies, hunger: number, length = 1.1) {
     const comet = species === 'comet';
-    // half body plus the caudal fin trailing behind the position point
-    const reach = length * (comet ? 0.95 : 0.80);
+    // Half-length plus the tail that trails behind, but NOT the full body
+    // diagonal: reserving that much left a slab only 1.9 deep for seven fish,
+    // which crowded them into the floor and made them jitter.
+    const reach = length * (comet ? 0.62 : 0.56);
     const bx = TANK.hw - reach - 0.18;
     const bz = TANK.hd - reach - 0.18;
     this.fish.push({
@@ -117,9 +119,11 @@ export class School {
         const o = this.fish[j];
         const dv = f.pos.clone().sub(o.pos);
         const dist = dv.length();
-        const minD = 1.9 * f.size;
+        // just over a body length: enough to stop overlap without the whole
+        // school shoving itself against the glass
+        const minD = 1.15 * f.size;
         if (dist < minD && dist > 1e-4) {
-          desired.addScaledVector(dv.normalize(), (1 - dist / minD) * 3.2);
+          desired.addScaledVector(dv.normalize(), (1 - dist / minD) * 2.4);
         }
       }
 
@@ -205,7 +209,34 @@ export class School {
       // slow, heavy water feel: less speed, gentler acceleration
       const baseSpeed = (0.62 + 0.38 * (1 - hungerK * 0.5)) * (f.species === 'comet' ? 1.20 : 1.0);
       const speedTarget = baseSpeed * (1 - f.focus * 0.55) * (1 + f.fear * 1.5);
-      f.vel.lerp(desired.multiplyScalar(speedTarget), 1 - Math.exp(-dt * 1.15));
+
+      // Steering authority is a turning rate, not a velocity lerp. Feeding the
+      // raw per-frame desired direction straight into velocity made the fish
+      // twitch back and forth whenever separation and curiosity disagreed;
+      // limiting how fast the heading may change forces wide, fish-like arcs.
+      const targetVel = desired.clone().multiplyScalar(speedTarget);
+      const curSpeed = f.vel.length();
+      if (curSpeed < 1e-4) {
+        f.vel.copy(targetVel);
+      } else {
+        const curDir = f.vel.clone().divideScalar(curSpeed);
+        const tgtDir = targetVel.clone().normalize();
+        const dot = THREE.MathUtils.clamp(curDir.dot(tgtDir), -1, 1);
+        const angle = Math.acos(dot);
+        const maxTurn = (1.6 + f.fear * 3.0) * dt;   // rad/s
+        let newDir: THREE.Vector3;
+        if (angle <= maxTurn || angle < 1e-4) {
+          newDir = tgtDir;
+        } else {
+          const axis = new THREE.Vector3().crossVectors(curDir, tgtDir);
+          if (axis.lengthSq() < 1e-8) axis.set(0, 1, 0);
+          axis.normalize();
+          newDir = curDir.clone().applyAxisAngle(axis, maxTurn);
+        }
+        // speed changes gently; heading changes are rate-limited above
+        const newSpeed = curSpeed + (speedTarget - curSpeed) * (1 - Math.exp(-dt * 1.1));
+        f.vel.copy(newDir).multiplyScalar(newSpeed);
+      }
       const sp = f.vel.length();
       if (sp > 1.7) f.vel.multiplyScalar(1.7 / sp);
       f.pos.addScaledVector(f.vel, dt);

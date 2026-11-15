@@ -225,11 +225,10 @@ export function makeMediaPass(): FullPass {
 
       vec3 trans = exp(-uSigma * waterPath);
       vec3 fog = uInscatter * (1.0 - exp(-waterPath * 0.16));
-      vec3 c = col * trans + fog;
 
-      // suspended particulate in the light shafts
-      float dust = smoothstep(0.55, 1.0, noise2(vUv * vec2(420.0, 240.0) + vec2(uTime * 2.0, uTime * -1.2))) * 0.05;
-      c += vec3(0.75, 0.85, 0.78) * dust * smoothstep(0.0, 2.0, waterPath);
+      // Volumetric haze only. A per-pixel "dust" term here aliased into a
+      // screen-space grain that read as dirt on the glass, so it is gone.
+      vec3 c = col * trans + fog;
 
       gl_FragColor = vec4(c, 1.0);
     }

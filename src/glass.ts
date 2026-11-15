@@ -70,23 +70,24 @@ export function makeGlassScene(sh: Shared): {
         float thick = 0.010 + 0.012 * step(0.5, abs(Nf.x)) + 0.012 * step(0.5, abs(Nf.z));
         vec2 off = slope * thick * smoothstep(0.0, 0.5, abs(facing) < 0.95 ? 0.4 : 0.1);
 
-        vec3 behind = vec3(
-          texture2D(uScene, uv + off).r,
-          texture2D(uScene, uv).g,
-          texture2D(uScene, uv - off).b
-        );
+        // Keep the displacement tiny and do NOT split it per channel: a large
+        // or chromatic offset re-samples the whole scene shifted, which showed
+        // up as ghost fins and eyes hanging outside the fish, plus a coloured
+        // halo around every subject. Flat glass barely bends light anyway.
+        off *= 0.10;
+        vec3 behind = texture2D(uScene, uv + off).rgb;
 
-        float fres = pow(1.0 - clamp(abs(dot(Nf, V)), 0.0, 1.0), 4.0);
+        float fres = pow(1.0 - clamp(abs(dot(Nf, V)), 0.0, 1.0), 5.0);
         vec3 R = reflect(-V, Nf);
         vec3 refl = envColor(R, uSunDir);
 
         // green-blue glass tint, stronger toward grazing angles
-        vec3 tint = vec3(0.66, 0.92, 0.88);
-        float pathLen = 1.0 + fres * 2.5;
-        vec3 absorbed = exp(-(1.0 - tint) * pathLen * 1.1);
+        vec3 tint = vec3(0.72, 0.94, 0.90);
+        float pathLen = 1.0 + fres * 1.6;
+        vec3 absorbed = exp(-(1.0 - tint) * pathLen * 0.8);
         vec3 col = behind * absorbed;
 
-        col = mix(col, refl, fres * 0.55);
+        col = mix(col, refl, fres * 0.28);
 
         // specular streaks from the key light and a soft strip reflection
         vec3 L = normalize(uSunDir);
@@ -94,10 +95,10 @@ export function makeGlassScene(sh: Shared): {
         col += uSunColor * pow(max(0.0, dot(Nf, H)), 500.0) * 0.9;
 
         // thin bright edges where the glass breaks
-        float edge = smoothstep(0.88, 0.995, 1.0 - abs(facing));
-        col += vec3(0.55, 0.78, 0.82) * edge * 0.35;
+        float edge = smoothstep(0.93, 0.998, 1.0 - abs(facing));
+        col += vec3(0.55, 0.78, 0.82) * edge * 0.12;
 
-        float a = clamp(fres * 0.62 + 0.10 + edge * 0.35, 0.0, 1.0);
+        float a = clamp(fres * 0.30 + 0.05 + edge * 0.25, 0.0, 0.85);
         gl_FragColor = vec4(col, a);
       }
     `,

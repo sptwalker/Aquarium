@@ -56,20 +56,20 @@ function bodyProfile(z: number): number {
   // Egg-shaped goldfish body: deep behind the head, tapering hard into the
   // caudal peduncle, with a short rounded snout.
   const t = THREE.MathUtils.clamp((z + 0.5) / 1.0, 0, 1);
-  if (t > 0.86) {
-    // snout: quick but smooth taper to a small mouth
-    const k = (t - 0.86) / 0.14;
-    return Math.sqrt(Math.max(0, 1 - k * k)) * 0.52 + 0.10;
+  if (t < 0.14) {
+    // caudal peduncle: the narrow waist that makes a fish read as a fish
+    const k = t / 0.14;
+    return 0.13 + 0.22 * k * k;
   }
-  if (t > 0.16) {
-    // widest just behind the gill cover, gently narrowing forward
-    const k = (t - 0.16) / 0.70;
-    const peak = Math.sin(Math.pow(k, 0.75) * Math.PI * 0.92);
-    return 0.44 + 0.58 * peak;
+  if (t < 0.86) {
+    // main body: rises quickly behind the head, falls gently to the peduncle
+    const k = (t - 0.14) / 0.72;
+    const peak = Math.sin(Math.pow(k, 0.70) * Math.PI * 0.95);
+    return 0.35 + 0.67 * peak;
   }
-  // caudal peduncle: thin, then a small flare where the tail root begins
-  const k = t / 0.16;
-  return 0.10 + 0.34 * k * k;
+  // snout: short and blunt, never a spike
+  const k = (t - 0.86) / 0.14;
+  return Math.sqrt(Math.max(0, 1 - k * k)) * 0.46 + 0.14;
 }
 
 /**
@@ -82,8 +82,8 @@ function surfaceHalfWidth(style: FishStyle, z: number, y: number): number {
   const t = u * 2 - 1;
   const prof = bodyProfile(u - 0.5) * style.girth;
   const headK = THREE.MathUtils.smoothstep(t, 0.62, 1.0);
-  const halfY = prof * 0.86 * (1.0 - headK * 0.30);
-  const rx = prof * 0.70 * (1.0 - headK * 0.28);
+  const halfY = prof * 0.86 * (1.0 - headK * 0.16);
+  const rx = prof * 0.70 * (1.0 - headK * 0.20);
   const k = THREE.MathUtils.clamp(Math.abs(y) / Math.max(1e-4, halfY), 0, 0.999);
   return rx * Math.sqrt(1 - k * k);
 }
@@ -111,10 +111,11 @@ function buildBodyGeometry(style: FishStyle, segs = 46, radial = 22): THREE.Buff
       // dorsal ridge + belly curve
       y += Math.max(0, sa) * prof * 0.14;
       y -= Math.max(0, -sa) * prof * 0.18;
-      // head narrows toward the snout and rounds off
+      // head keeps most of its depth: a shrunken head is what made these read
+      // as coins rather than fish
       const headK = THREE.MathUtils.smoothstep(t, 0.62, 1.0);
-      y *= 1.0 - headK * 0.30;
-      x *= 1.0 - headK * 0.28;
+      y *= 1.0 - headK * 0.16;
+      x *= 1.0 - headK * 0.20;
       // mouth indentation
       const mouth = THREE.MathUtils.smoothstep(t, 0.90, 1.0);
       y -= mouth * Math.abs(Math.cos(a)) * prof * 0.10;
@@ -320,6 +321,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
       uniform vec3 uBelly;
       uniform float uWen;
       uniform float uMouth;
+      uniform float uLen;
       varying vec3 vWorld;
       varying vec3 vNormal;
       varying vec3 vLocalNormal;
@@ -358,16 +360,22 @@ export function makeFish(style: FishStyle, shared: Shared): {
         vec3 col = mix(uHueA, uHueB, smoothstep(0.25, 0.85, blotch + blotch2 * 0.35));
         col = mix(col, col * vec3(1.06, 0.92, 0.86), smoothstep(0.5, 0.9, along) * 0.35);
 
-        // the white belly is a narrow underside band, not half the fish
-        float bellyMask = smoothstep(-0.10, -0.62, up) * smoothstep(0.90, 0.30, along);
-        col = mix(col, uBelly, bellyMask * 0.88);
+        // the white belly is an underside band; the normal test alone let it
+        // wrap over the top of the head because head normals point sideways
+        // there, so it is also gated on being low on the body
+        float lowish = smoothstep(0.15, -0.55, vLocal.y / max(0.001, uLen * 0.16));
+        float bellyMask = smoothstep(-0.10, -0.62, up) * lowish * smoothstep(0.92, 0.35, along);
+        col = mix(col, uBelly, bellyMask * 0.85);
 
-        // ---- scale lattice: very low contrast, it is a sheen not a pattern
+        // ---- scale lattice: a sheen, not a pattern. High-frequency cells at
+        // this scale alias into a dot grid, so keep them very low contrast and
+        // fade them out on the head.
         vec2 cell;
         float sm = scaleMask(vec2(uv.x, uv.y * 1.02), cell);
+        sm *= smoothstep(0.05, 0.30, along);      // no scales on the snout
         float scaleHue = hash11(cell.x * 7.31 + cell.y * 3.17);
-        col *= 0.965 + 0.055 * sm;
-        col = mix(col, col * vec3(1.03, 0.995, 0.955), sm * 0.22 * scaleHue);
+        col *= 0.985 + 0.024 * sm;
+        col = mix(col, col * vec3(1.015, 1.0, 0.985), sm * 0.12 * scaleHue);
 
         // ---- oranda wen (bumpy growth on head)
         float head = smoothstep(0.62, 0.95, along);
@@ -379,7 +387,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
         // tangent frame: local x should map to around, local y across
         vec3 T = normalize(cross(N, vec3(0.0, 1.0, 0.0)) + 1e-4);
         vec3 B = normalize(cross(N, T));
-        N = normalize(N + (T * pert.x + B * pert.y) * 0.11 + normalize(vLocal) * wen * 0.4);
+        N = normalize(N + (T * pert.x + B * pert.y) * 0.055 + normalize(vLocal) * wen * 0.4);
 
         // ---- lighting
         vec3 V = normalize(cameraPosition - vWorld);
@@ -469,10 +477,13 @@ export function makeFish(style: FishStyle, shared: Shared): {
         col += uFinTint * fres * 0.22;
         col += vec3(1.0) * pow(max(0.0, dot(reflect(-L, N), V)), 60.0) * 0.10;
         col = min(col, vec3(1.6));
-        float a = mem * (0.30 + 0.30 * fres + trans * 0.12);
-        a *= smoothstep(1.0, 0.93, uv.y);        // fade at the far tip
-        a *= 0.35 + 0.65 * smoothstep(0.0, 0.28, uv.y);  // rooted edge is solid
-        gl_FragColor = vec4(col, clamp(a, 0.0, 0.90));
+        // Fins are thin membranes, but a *very* transparent fin lets the body
+        // and the far-side fins show through, which reads as the fin being
+        // "seen through the model". Keep them solid enough to occlude.
+        float a = mem * (0.62 + 0.22 * fres + trans * 0.10);
+        a *= smoothstep(1.0, 0.955, uv.y);       // fade only at the far tip
+        a *= 0.55 + 0.45 * smoothstep(0.0, 0.22, uv.y);  // rooted edge is solid
+        gl_FragColor = vec4(col, clamp(a, 0.0, 0.95));
       }
     `,
   });
@@ -545,6 +556,11 @@ export function makeFish(style: FishStyle, shared: Shared): {
   void pupilGeo;
   const eyeMat = new THREE.ShaderMaterial({
     uniforms,
+    // The lens sits where the skin is, so without a depth bias the two
+    // surfaces z-fight and the eye appears to bleed through the head.
+    polygonOffset: true,
+    polygonOffsetFactor: -4,
+    polygonOffsetUnits: -4,
     vertexShader: 'varying vec3 vN; varying vec3 vW; void main(){ vN = normalize(mat3(modelMatrix) * normal); vW = (modelMatrix*vec4(position,1.0)).xyz; gl_Position = projectionMatrix * viewMatrix * vec4(vW,1.0); }',
     fragmentShader: /* glsl */ `
       ${ENV}
@@ -573,9 +589,10 @@ export function makeFish(style: FishStyle, shared: Shared): {
     group.add(eye);
     return {
       mesh: eye,
-      // sit the lens on the actual skin, found from the body cross-section,
-      // and let it bulge slightly outward like a real eye
-      x: s * (surfaceHalfWidth(style, style.length * 0.33, style.girth * 0.26) + style.girth * 0.015),
+      // Seat the sphere so its centre is *inside* the head and only a lens
+      // cap protrudes: a centre placed on the skin leaves half the ball
+      // floating and half buried, which reads as a hole in the body.
+      x: s * (surfaceHalfWidth(style, style.length * 0.33, style.girth * 0.26) - style.girth * 0.045),
       y: style.girth * 0.26,
       z: style.length * 0.33,
     };
