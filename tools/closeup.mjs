@@ -35,12 +35,23 @@ await page.waitForFunction('window.__camera !== undefined', { timeout: 60000 });
 // frame the largest fish, keeping the camera outside the glass
 await page.evaluate((d, h) => {
   const { camera, controls } = window.__camera;
-  const probe = window.__probe();
-  const f = probe.fish[0];
-  controls.target.set(f[0], f[1], f[2]);
-  // approach from the front glass so we see the flank, not the tank corner
-  camera.position.set(f[0] * 0.5, f[1] + h * 0.10, Math.min(3.2, d));
-  controls.update();
+  // OrbitControls clamps to minDistance, which silently forced every previous
+  // "close-up" back out to six units. Relax it for inspection only.
+  controls.minDistance = 0.15;
+  controls.maxDistance = 40;
+
+  // The fish swims, so a one-shot reposition loses it. Track it every frame
+  // from a fixed offset so the framing stays put.
+  window.__follow = { d, h };
+  const tick = () => {
+    const f = window.__probe().fish[0];
+    const off = window.__follow;
+    controls.target.set(f[0], f[1], f[2]);
+    camera.position.set(f[0] * 0.25, f[1] + off.h * 0.03, Math.min(3.2, off.d));
+    controls.update();
+    requestAnimationFrame(tick);
+  };
+  tick();
 }, dist, height);
 
 await new Promise((r) => setTimeout(r, waitMs));

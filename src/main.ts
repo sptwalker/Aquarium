@@ -162,7 +162,15 @@ declare global {
     __stats?: unknown;
     __quality?: () => Record<string, unknown> & { name: string };
     __tail?: () => { min: number[]; max: number[]; tip: number[] } | null;
-    __camera?: { camera: THREE.PerspectiveCamera; controls: { target: THREE.Vector3; update: () => void } };
+    __camera?: {
+      camera: THREE.PerspectiveCamera;
+      controls: {
+        target: THREE.Vector3;
+        update: () => void;
+        minDistance: number;
+        maxDistance: number;
+      };
+    };
     __probe?: () => {
       foodLive: number;
       hungerSum: number;

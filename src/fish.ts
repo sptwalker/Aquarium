@@ -107,11 +107,24 @@ function smoothProfile(t: number): number {
  */
 function bodySurface(style: FishStyle, t: number, angle: number): THREE.Vector3 {
   const L = style.length;
-  const r = smoothProfile(t);
+  let r = smoothProfile(t);
   const z = (t - 0.5) * L;
   // the lateral midline sits slightly high, so the belly hangs lower than the
   // back rises — a symmetric tube reads as a sausage
-  const cy = -r * style.depth * L * 0.06;
+  let cy = -r * style.depth * L * 0.06;
+
+  // Mouth: a smooth radial depression at the very tip. Doing it here, in the
+  // one surface function, means the surrounding skin stays watertight — an
+  // earlier version indented only the lower half of the snout in the mesh and
+  // left a raised ring around the mouth.
+  const mouthK = THREE.MathUtils.smoothstep(t, 0.93, 1.0);
+  if (mouthK > 0) {
+    // narrow toward the angle pointing forward-ish; deepest at the tip
+    const funnel = mouthK * mouthK * (0.55 + 0.45 * Math.max(0, Math.cos(angle)));
+    r *= 1 - funnel * 0.55;
+    cy += funnel * style.depth * L * 0.05;
+  }
+
   return new THREE.Vector3(
     Math.cos(angle) * r * style.width * L,
     cy + Math.sin(angle) * r * style.depth * L,
@@ -196,12 +209,17 @@ function buildFin(
 
   // span of the fin along the body axis, in t
   const tSpan: [number, number] =
-    kind === 'dorsal' ? [0.30, 0.66] : kind === 'anal' ? [0.24, 0.44] : [0.58, 0.72];
+    kind === 'dorsal' ? [0.30, 0.66] : kind === 'anal' ? [0.24, 0.44] : [0.60, 0.73];
 
   // how tall the fin grows relative to body length
-  const maxH = kind === 'dorsal' ? L * 0.105 : kind === 'anal' ? L * 0.080 : L * 0.095;
+  const maxH = kind === 'dorsal' ? L * 0.095 : kind === 'anal' ? L * 0.065 : L * 0.058;
 
-  const angle = kind === 'dorsal' ? Math.PI / 2 : kind === 'anal' ? -Math.PI / 2 : 0;
+  // Root angle. Pectorals sit low on the flank, just behind the gill cover;
+  // at the midline they ended up drawn across the cheek and the eye.
+  const angle =
+    kind === 'dorsal' ? Math.PI / 2
+    : kind === 'anal' ? -Math.PI / 2
+    : side > 0 ? -0.42 : Math.PI + 0.42;
 
   for (let i = 0; i < rows; i++) {
     const u = i / segsU;
@@ -215,13 +233,18 @@ function buildFin(
     let spanDir: THREE.Vector3;
     let chordDir: THREE.Vector3;
     if (kind === 'pectoral') {
-      // sweeps back and out from the flank; the chord runs along the body
-      spanDir = new THREE.Vector3(side * 0.72, -0.30, -0.62).normalize();
-      chordDir = new THREE.Vector3(0, 0, -1);
+      // sweeps back and outward from low on the flank
+      spanDir = new THREE.Vector3(side * 0.70, -0.34, -0.62).normalize();
+      chordDir = new THREE.Vector3(0, 0, 1);
     } else {
       spanDir = nrm.clone();
       chordDir = new THREE.Vector3(0, 0, 1);
     }
+
+    // Blend the span direction toward the surface normal as it leaves the
+    // body, so the fin leaves the skin tangentially instead of sticking out
+    // of it like a plate, and hugs the flank near the root.
+    const rootBlend = nrm.clone().multiplyScalar(0.55).addScaledVector(spanDir, 0.45);
 
     for (let j = 0; j < cols; j++) {
       const d = j / segsV;                      // 0 root .. 1 tip
@@ -230,17 +253,25 @@ function buildFin(
       const arc = Math.sin(Math.min(1, Math.max(0, (u - 0.02) / 0.96)) * Math.PI);
       const env = Math.pow(arc, 0.55);
 
-      // The membrane is widest mid-span and narrow at the root, and the
-      // trailing edge is swept back relative to the leading edge.
-      const chord = maxH * env * (0.85 + 0.35 * d);
+      // Chord width starts at *zero* at the root. That is what welds the fin to
+      // the body: at d = 0 every column collapses onto the single sampled skin
+      // point, so the root is a line lying on the surface instead of a floating
+      // straight edge hovering over a curved flank.
+      const chord = maxH * env * Math.pow(d, 0.72) * 1.15;
       const sweepBack = d * d * maxH * 0.55;
 
-      // u - 0.5 runs -0.5..0.5 across the chord
       const across = (u - 0.5) * chord;
       const ripple = 1 + 0.05 * Math.sin(u * 23.0) * d;
 
+      // blend the outward direction so the base leaves the skin tangentially
+      const dir = new THREE.Vector3()
+        .copy(rootBlend)
+        .multiplyScalar(1 - d)
+        .addScaledVector(spanDir, d)
+        .normalize();
+
       const p = root.clone()
-        .addScaledVector(spanDir, d * maxH * env * ripple)
+        .addScaledVector(dir, d * maxH * env * ripple)
         .addScaledVector(chordDir, across - sweepBack);
 
       positions.push(p.x, p.y, p.z);
@@ -376,14 +407,21 @@ export function makeFish(style: FishStyle, shared: Shared): {
       varying vec3 vLocal;
       varying vec2 vUv;
 
-      // Scalloped scale cells, used only for a faint sheen.
-      float scaleSheen(vec2 uv, out float cellRand){
-        vec2 g = vec2(uv.x * 30.0, uv.y * 38.0);
+      // Scalloped scale cells on a cylindrical lattice. The angle is derived
+      // from the local position rather than the UV, so the pattern is
+      // continuous where the UV wraps — sampling it in uv space left a seam
+      // running down the flank.
+      float scaleSheen(vec3 lp, out float cellRand){
+        float ang = atan(lp.y, lp.x) / 6.28318 + 0.5;
+        vec2 g = vec2(ang * 34.0, lp.z * 30.0);
         g.x += step(1.0, mod(floor(g.y), 2.0)) * 0.5;
+        float row = floor(g.y);
+        // wrap the column count so the last cell meets the first
+        float col = mod(floor(g.x), 34.0);
         vec2 f = fract(g) - 0.5;
-        float d = length(vec2(f.x * 1.15, f.y * 1.0));
-        cellRand = fract(sin(dot(floor(g), vec2(12.9898, 78.233))) * 43758.5453);
-        return smoothstep(0.55, 0.22, d);
+        float d = length(vec2(f.x * 1.15, f.y));
+        cellRand = fract(sin(dot(vec2(col, row), vec2(12.9898, 78.233))) * 43758.5453);
+        return smoothstep(0.55, 0.20, d);
       }
 
       void main(){
@@ -392,9 +430,12 @@ export function makeFish(style: FishStyle, shared: Shared): {
         float along = uv.y;              // 0 tail .. 1 snout
         float up = vLocal.y;             // negative = belly
 
-        // ---- base colour: mottled orange over a pale belly
-        float m1 = fbm3(vec2(uv.x * 4.0 + 1.7, uv.y * 6.0));
-        float m2 = fbm3(vec2(uv.x * 9.0, uv.y * 12.0) + 19.0);
+        // ---- base colour: mottled orange over a pale belly.
+        // Sample noise from the 3D position, not uv: uv.x wraps at the flank,
+        // and the mismatch showed up as a hard dark patch on the back.
+        vec3 lp = vLocal;
+        float m1 = fbm3(vec2(lp.x * 3.5 + lp.z * 2.0, lp.y * 6.0 + lp.z * 4.0));
+        float m2 = fbm3(vec2(lp.x * 8.0 + lp.z * 5.0, lp.y * 11.0) + 19.0);
         vec3 col = mix(uHueA, uHueB, smoothstep(0.30, 0.80, m1 + m2 * 0.4));
         // slight paling toward the caudal peduncle
         col = mix(col, col * vec3(1.04, 0.95, 0.92), smoothstep(0.55, 0.12, along) * 0.35);
@@ -406,26 +447,34 @@ export function makeFish(style: FishStyle, shared: Shared): {
         col = mix(col, uBelly, belly * 0.80);
 
         // ---- oranda wen
-        float head = smoothstep(0.78, 0.98, along);
-        float wenN = uWen * head * (fbm3(vec2(uv.x * 15.0, uv.y * 11.0)) - 0.45);
-        col *= 1.0 + wenN * 1.2;
+        // A multiplicative term driven by noise was darkening whole patches of
+        // the head (down to 0.46x). Real wen is fleshy growth, so it should
+        // read as a gentle bump with a lighter, waxy tone.
+        float head = smoothstep(0.78, 0.98, along) * smoothstep(0.95, 0.70, abs(uv.x - 0.5) * 2.0);
+        float wenN = uWen * head * fbm3(vec2(lp.z * 12.0, lp.y * 9.0));
+        col = mix(col, mix(col, vec3(0.92, 0.55, 0.30), 0.45), wenN * 0.55);
 
         // ---- faint scale sheen (very low contrast; the relief is in the normal)
         float cellRand;
-        float sm = scaleSheen(vec2(uv.x, uv.y), cellRand);
+        float sm = scaleSheen(vLocal, cellRand);
         sm *= smoothstep(0.10, 0.28, along) * smoothstep(0.94, 0.72, along);
         col *= 0.982 + 0.030 * sm;
         col = mix(col, col * vec3(1.02, 1.0, 0.98), sm * 0.14 * cellRand);
 
-        // ---- normal relief
+        // ---- normal relief, same cylindrical lattice
         {
-          vec2 g = vec2(uv.x * 30.0, uv.y * 38.0);
+          float ang = atan(vLocal.y, vLocal.x) / 6.28318 + 0.5;
+          vec2 g = vec2(ang * 34.0, vLocal.z * 30.0);
           g.x += step(1.0, mod(floor(g.y), 2.0)) * 0.5;
           vec2 f = fract(g) - 0.5;
           float d = length(vec2(f.x * 1.15, f.y));
           vec2 dir = normalize(f + 1e-5);
-          float amp = smoothstep(0.50, 0.20, d) * 0.16 * sm;
-          vec3 T = normalize(cross(N, vec3(0.0, 1.0, 0.0)) + 1e-4);
+          float amp = smoothstep(0.50, 0.18, d) * 0.14 * sm;
+          // Stable tangent frame: cross(N, up) degenerates to zero where N is
+          // parallel to up (the very top of the back), which spiked the normals
+          // into dark blotches. Fall back to a second axis near the pole.
+          vec3 hint = abs(N.y) > 0.92 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
+          vec3 T = normalize(cross(N, hint) + 1e-4);
           vec3 B = normalize(cross(N, T));
           N = normalize(N + (T * dir.x + B * dir.y) * amp);
         }
@@ -453,12 +502,11 @@ export function makeFish(style: FishStyle, shared: Shared): {
         lit += envColor(R, uSunDir) * fres * 0.30;
         lit += (0.5 + 0.5 * cos(vec3(0.0, 2.1, 4.2) + fres * 4.0)) * fres * 0.06;
 
-        // ---- painted mouth: a small dark oval at the snout tip.
-        // Widening it with uMouth gives the gape without any mesh deformation.
-        vec2 mp = vec2((uv.x - 0.5) * 2.0, (uv.y - 0.995) * 30.0);
-        float gape = uMouth * 0.55;
-        float mouth = smoothstep(0.42 + gape, 0.10, length(vec2(mp.x, mp.y * 1.6)));
-        lit *= 1.0 - mouth * 0.80;
+        // ---- snout shading: the mouth itself is real geometry, this only
+        // darkens the skin immediately around it
+        vec2 mp = vec2((uv.x - 0.5) * 2.0, (uv.y - 0.995) * 34.0);
+        float mouthHalo = smoothstep(0.55, 0.12, length(vec2(mp.x, mp.y * 1.5)));
+        lit *= 1.0 - mouthHalo * 0.35;
 
         gl_FragColor = vec4(lit, 1.0);
       }
@@ -514,7 +562,48 @@ export function makeFish(style: FishStyle, shared: Shared): {
     `,
   });
 
+  // ---- mouth: real geometry, a short inward funnel at the snout tip.
+  // A painted oval was invisible from the side, which is why the fish looked
+  // mouthless. This cone is dark inside and opens with uMouth.
+  //
+  // ConeGeometry's apex is at +y. rotateX(-PI/2) sends +y to +z, so the apex
+  // points forward and the opening faces back into the head — the reverse of
+  // what we want. rotateX(+PI/2) puts the apex at -z (inside the head) and the
+  // open base at +z, facing out of the snout.
+  const mouthOpenR = style.length * 0.026;
+  const mouthGeo = new THREE.ConeGeometry(mouthOpenR, style.length * 0.055, 16, 1, true);
+  mouthGeo.rotateX(-Math.PI / 2);
+  const mouthMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    uniforms,
+    vertexShader: /* glsl */ `
+      varying vec3 vN; varying vec3 vW;
+      void main(){
+        vN = normalize(mat3(modelMatrix) * normal);
+        vW = (modelMatrix * vec4(position, 1.0)).xyz;
+        gl_Position = projectionMatrix * viewMatrix * vec4(vW, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      varying vec3 vN; varying vec3 vW;
+      void main(){
+        // dark throat, warm rim, so it reads as a hole rather than a shape
+        vec3 N = normalize(vN);
+        vec3 V = normalize(cameraPosition - vW);
+        float rim = pow(1.0 - abs(dot(N, V)), 2.0);
+        vec3 col = mix(vec3(0.035, 0.010, 0.008), vec3(0.30, 0.09, 0.06), rim);
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `,
+  });
   const group = new THREE.Group();
+
+  const mouth = new THREE.Mesh(mouthGeo, mouthMat);
+  // Recess it into the snout so only the dark opening shows, not a beak.
+  const snoutTip = bodySurface(style, 0.995, 0);
+  mouth.position.set(0, snoutTip.y * 0.55, snoutTip.z - style.length * 0.028);
+  group.add(mouth);
+
   const body = new THREE.Mesh(buildBodyGeometry(style), bodyMat);
   body.frustumCulled = false;
   group.add(body);
@@ -559,7 +648,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
   const eyeT = 0.855;
   const eyeAngle = Math.PI * 0.13;
   // small relative to the head: bulbs at the old scale read as googly eyes
-  const eyeR = style.length * 0.024;
+  const eyeR = style.length * 0.021;
   const eyeGeo = new THREE.SphereGeometry(eyeR, 20, 16);
   const eyeMat = new THREE.ShaderMaterial({
     uniforms,
@@ -596,8 +685,10 @@ export function makeFish(style: FishStyle, shared: Shared): {
     const ang = s > 0 ? eyeAngle : Math.PI - eyeAngle;
     const surf = bodySurface(style, t, ang);
     const nrm = bodyNormal(style, t, ang);
-    // centre pushed inward so the sphere is mostly buried
-    const centre = surf.clone().addScaledVector(nrm, -eyeR * 0.45);
+    // Bury most of the sphere. The head curves away sharply here, so a
+    // nominally half-buried ball still shows more than half — which is what
+    // made the eyes look like beads glued on.
+    const centre = surf.clone().addScaledVector(nrm, -eyeR * 0.80);
     const eye = new THREE.Mesh(eyeGeo, eyeMat);
     eye.frustumCulled = false;
     eye.position.copy(centre);
