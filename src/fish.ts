@@ -3,7 +3,7 @@ import { NOISE, SWIM, ENV, CAUSTIC } from './glsl';
 import type { Shared } from './scene';
 import { FinCloth } from './cloth';
 
-export type FishSpecies = 'fantail' | 'oranda' | 'ryukin' | 'comet';
+export type FishSpecies = 'fantail' | 'oranda' | 'ryukin' | 'comet' | 'koi';
 
 type FishStyle = {
   length: number;
@@ -16,6 +16,10 @@ type FishStyle = {
   belly: THREE.Vector3;
   finTint: THREE.Vector3;
   wen: number;
+  /** koi livery: white ground with red patches */
+  koi: number;
+  /** 1 = four barbels at the mouth (koi); 0 = none (goldfish) */
+  barbels: number;
 };
 
 const STYLES: Record<FishSpecies, FishStyle> = {
@@ -25,7 +29,7 @@ const STYLES: Record<FishSpecies, FishStyle> = {
     hueB: new THREE.Vector3(0.92, 0.10, 0.014),
     belly: new THREE.Vector3(1.0, 0.92, 0.82),
     finTint: new THREE.Vector3(1.0, 0.42, 0.18),
-    wen: 0.0,
+    wen: 0.0, koi: 0.0, barbels: 0,
   },
   oranda: {
     length: 1.02, depth: 0.215, width: 0.130,
@@ -33,7 +37,7 @@ const STYLES: Record<FishSpecies, FishStyle> = {
     hueB: new THREE.Vector3(0.86, 0.07, 0.012),
     belly: new THREE.Vector3(1.0, 0.90, 0.78),
     finTint: new THREE.Vector3(1.0, 0.50, 0.24),
-    wen: 1.0,
+    wen: 1.0, koi: 0.0, barbels: 0,
   },
   ryukin: {
     length: 0.94, depth: 0.220, width: 0.135,
@@ -41,7 +45,7 @@ const STYLES: Record<FishSpecies, FishStyle> = {
     hueB: new THREE.Vector3(0.88, 0.44, 0.30),
     belly: new THREE.Vector3(1.0, 0.95, 0.88),
     finTint: new THREE.Vector3(1.0, 0.64, 0.38),
-    wen: 0.0,
+    wen: 0.0, koi: 0.0, barbels: 0,
   },
   comet: {
     length: 1.38, depth: 0.150, width: 0.095,
@@ -49,7 +53,17 @@ const STYLES: Record<FishSpecies, FishStyle> = {
     hueB: new THREE.Vector3(0.97, 0.52, 0.030),
     belly: new THREE.Vector3(1.0, 0.95, 0.87),
     finTint: new THREE.Vector3(1.0, 0.46, 0.16),
-    wen: 0.0,
+    wen: 0.0, koi: 0.0, barbels: 0,
+  },
+  // Kohaku-type koi: white ground with red-orange patches, four barbels, a
+  // slimmer body than a fancy goldfish, and a protruding rostrum.
+  koi: {
+    length: 1.45, depth: 0.170, width: 0.105,
+    hueA: new THREE.Vector3(1.0, 0.30, 0.035),   // the red patches
+    hueB: new THREE.Vector3(1.0, 0.47, 0.10),
+    belly: new THREE.Vector3(0.96, 0.95, 0.92),  // white ground
+    finTint: new THREE.Vector3(0.97, 0.90, 0.84),
+    wen: 0.0, koi: 1.0, barbels: 1,
   },
 };
 
@@ -109,10 +123,20 @@ function smoothProfile(t: number): number {
 function bodySurface(style: FishStyle, t: number, angle: number): THREE.Vector3 {
   const L = style.length;
   const r = smoothProfile(t);
-  const z = (t - 0.5) * L;
+  let z = (t - 0.5) * L;
   // the lateral midline sits slightly high, so the belly hangs lower than the
   // back rises — a symmetric tube reads as a sausage
-  const cy = -r * style.depth * L * 0.06;
+  let cy = -r * style.depth * L * 0.06;
+
+  // Koi carry a protruding muzzle: the mouth sits at the end of a short snout
+  // rather than flush on a rounded nose. Push the last stretch forward, most
+  // strongly at the tip and tapering back to nothing.
+  if (style.barbels > 0) {
+    const tip = THREE.MathUtils.smoothstep(t, 0.86, 1.0);
+    z += tip * tip * L * 0.055;
+    // ...and drop it slightly, so the mouth is below the eye line
+    cy -= tip * tip * L * 0.012;
+  }
 
   return new THREE.Vector3(
     Math.cos(angle) * r * style.width * L,
@@ -218,7 +242,7 @@ function buildBodyGeometry(style: FishStyle, segs = 64, radial = 32): THREE.Buff
 // Fins
 // ---------------------------------------------------------------------------
 
-type FinAxis = 'dorsal' | 'anal' | 'pectoral';
+type FinAxis = 'dorsal' | 'anal' | 'pectoral' | 'pelvic';
 
 /**
  * Builds a fin as a grid whose v = 0 row is sampled from the body surface, so
@@ -238,19 +262,29 @@ function buildFin(
   const uvs: number[] = [];
   const idx: number[] = [];
 
-  // span of the fin along the body axis, in t
+  // Span along the body axis, in t (0 tail tip .. 1 snout).
+  // Pelvic fins sit behind and below the pectorals — a pair on the belly that
+  // the model was missing entirely.
   const tSpan: [number, number] =
-    kind === 'dorsal' ? [0.30, 0.66] : kind === 'anal' ? [0.24, 0.44] : [0.60, 0.73];
+    kind === 'dorsal' ? [0.30, 0.66]
+    : kind === 'anal' ? [0.24, 0.44]
+    : kind === 'pectoral' ? [0.60, 0.73]
+    : [0.44, 0.56];
 
   // how tall the fin grows relative to body length
-  const maxH = kind === 'dorsal' ? L * 0.095 : kind === 'anal' ? L * 0.065 : L * 0.058;
+  const maxH =
+    kind === 'dorsal' ? L * 0.095
+    : kind === 'anal' ? L * 0.065
+    : kind === 'pectoral' ? L * 0.058
+    : L * 0.050;
 
-  // Root angle. Pectorals sit low on the flank, just behind the gill cover;
-  // at the midline they ended up drawn across the cheek and the eye.
+  // Root angle on the cross-section. Pectorals and pelvics sit on the flank /
+  // ventral flank, mirrored to opposite sides.
   const angle =
     kind === 'dorsal' ? Math.PI / 2
     : kind === 'anal' ? -Math.PI / 2
-    : side > 0 ? -0.42 : Math.PI + 0.42;
+    : kind === 'pectoral' ? (side > 0 ? -0.42 : Math.PI + 0.42)
+    : (side > 0 ? -0.95 : Math.PI + 0.95);
 
   for (let i = 0; i < rows; i++) {
     const u = i / segsU;
@@ -266,6 +300,10 @@ function buildFin(
     if (kind === 'pectoral') {
       // sweeps back and outward from low on the flank
       spanDir = new THREE.Vector3(side * 0.70, -0.34, -0.62).normalize();
+      chordDir = new THREE.Vector3(0, 0, 1);
+    } else if (kind === 'pelvic') {
+      // hangs down and back, closer to the body than a pectoral
+      spanDir = new THREE.Vector3(side * 0.42, -0.80, -0.44).normalize();
       chordDir = new THREE.Vector3(0, 0, 1);
     } else {
       spanDir = nrm.clone();
@@ -374,6 +412,7 @@ export type FishUniforms = {
   uFinTint: { value: THREE.Vector3 };
   uFinFreq: { value: number };
   uWen: { value: number };
+  uKoi: { value: number };
   uMouth: { value: number };
 };
 
@@ -399,6 +438,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
     uFinTint: { value: style.finTint.clone() },
     uFinFreq: { value: 26 },
     uWen: { value: style.wen },
+    uKoi: { value: style.koi },
     uMouth: { value: 0 },
   };
 
@@ -433,6 +473,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
       uniform vec3 uHueB;
       uniform vec3 uBelly;
       uniform float uWen;
+      uniform float uKoi;
       uniform float uMouth;
       uniform float uLen;
       varying vec3 vWorld;
@@ -499,11 +540,28 @@ export function makeFish(style: FishStyle, shared: Shared): {
         // slight paling toward the caudal peduncle
         col = mix(col, col * vec3(1.04, 0.95, 0.92), smoothstep(0.55, 0.12, along) * 0.35);
 
+        // ---- koi livery (kohaku): white ground with a few large red patches.
+        // Big soft blotches read as koi; the dense noise above reads as a
+        // gradient, which is why the koi was coming out plain orange.
+        if (uKoi > 0.5) {
+          // two octaves at very low frequency: blobs several body-lengths wide
+          float b1 = fbm3(vec2(lp.z * 2.6 + 11.0, lp.y * 3.4));
+          float b2 = fbm3(vec2(lp.z * 5.1 + 3.0, lp.y * 6.2) + 41.0);
+          // "patch" is a reserved word in GLSL
+          float blotch = b1 * 0.72 + b2 * 0.28;
+          // hard-ish edge: koi patches have crisp menpo borders
+          float red = smoothstep(0.46, 0.53, blotch);
+          // the back carries the colour; the belly stays white
+          red *= smoothstep(-0.35, 0.15, lp.y / max(0.001, uLen * 0.10));
+          red *= smoothstep(0.92, 0.80, along);       // white face, red body
+          col = mix(vec3(0.95, 0.94, 0.90), uHueA * vec3(1.05, 0.86, 0.80), red);
+        }
+
         // belly: a low, narrow band; gated on height so it cannot climb the
         // head where the surface normals point sideways
         float belly = smoothstep(0.30, 0.92, -up / max(0.001, uLen * 0.20))
                     * smoothstep(0.80, 0.30, along);
-        col = mix(col, uBelly, belly * 0.80);
+        col = mix(col, uBelly, belly * 0.80 * (1.0 - uKoi * 0.55));
 
         // ---- oranda wen
         // A multiplicative term driven by noise was darkening whole patches of
@@ -720,17 +778,106 @@ export function makeFish(style: FishStyle, shared: Shared): {
   group.add(tailMesh);
 
   // dorsal, anal, and a pectoral pair
+  // Seven fin positions, as a koi actually has: dorsal, caudal, anal, and the
+  // pectoral and pelvic pairs. (The pelvic pair was missing entirely.)
   const finSpecs: Array<[FinAxis, number]> = [
     ['dorsal', 0],
     ['anal', 0],
     ['pectoral', 1],
     ['pectoral', -1],
+    ['pelvic', 1],
+    ['pelvic', -1],
   ];
   for (const [kind, side] of finSpecs) {
     const g = buildFin(style, kind, side || 1);
     const m = new THREE.Mesh(g, finMat);
     m.frustumCulled = false;
     group.add(m);
+  }
+
+  // ---- barbels. Koi have FOUR: a long pair at the corners of the upper jaw
+  // and a shorter pair under the lower lip. (Six is not a number any cyprinid
+  // has; and goldfish varieties carry none at all, which is how you tell them
+  // apart, so this only appears when style.barbels is set.)
+  if (style.barbels > 0) {
+    const barbelMat = new THREE.ShaderMaterial({
+      uniforms,
+      vertexShader: /* glsl */ `
+        varying vec3 vN; varying vec3 vW;
+        void main(){
+          vN = normalize(mat3(modelMatrix) * normal);
+          vW = (modelMatrix * vec4(position, 1.0)).xyz;
+          gl_Position = projectionMatrix * viewMatrix * vec4(vW, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        ${CAUSTIC}
+        uniform vec3 uHueA;
+        varying vec3 vN; varying vec3 vW;
+        void main(){
+          vec3 N = normalize(vN);
+          vec3 L = normalize(uSunDir);
+          float casc = causticSample(vW, uTime);
+          float atten = exp(-max(0.0, 4.05 - vW.y) * 0.10);
+          float ndl = max(0.0, dot(N, L));
+          // Barbels are skin, not bone: tint them from the body colour. A pale
+          // mix made them read as wires hanging off the mouth.
+          vec3 col = uHueA * vec3(0.95, 0.90, 0.86)
+                   * (uSunColor * atten * (0.18 + 0.95 * casc) * (0.40 + ndl * 0.9)
+                      + vec3(0.028, 0.034, 0.036));
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `,
+    });
+
+    // Four barbels: a long pair at the upper-jaw corners, a short pair under the
+    // lower lip. They must start *inside* the skin and taper to a point, or they
+    // read as orange marks floating on the muzzle.
+    // Four barbels: a long pair at the corners of the upper jaw and a short pair
+    // under the lower lip. Angle 0 is the flank and -PI/2 is the belly, so the
+    // mouth sits at a NEGATIVE angle; using positive values pushed the barbels
+    // up onto the cheek at eye level. Each pair is mirrored with PI - a.
+    const upA = -0.30, loA = -0.78;
+    const barbels: Array<{ t: number; ang: number; len: number; drop: number; out: number }> = [
+      { t: 0.972, ang: upA, len: 0.042, drop: -0.35, out: 0.60 },
+      { t: 0.972, ang: Math.PI - upA, len: 0.042, drop: -0.35, out: 0.60 },
+      { t: 0.980, ang: loA, len: 0.028, drop: -0.65, out: 0.50 },
+      { t: 0.980, ang: Math.PI - loA, len: 0.028, drop: -0.65, out: 0.50 },
+    ];
+    for (const b of barbels) {
+      const rootP = bodySurface(style, b.t, b.ang);
+      const nrm = bodyNormal(style, b.t, b.ang);
+      const L = style.length;
+      // Start a little under the surface so the base is buried, then arc out,
+      // down and slightly back — the resting pose of a koi barbel.
+      const p0 = rootP.clone().addScaledVector(nrm, -L * 0.004);
+      const p1 = rootP.clone()
+        .addScaledVector(nrm, L * b.out * b.len * 0.55)
+        .add(new THREE.Vector3(0, L * b.drop * b.len * 0.35, L * b.len * 0.15));
+      const p2 = rootP.clone()
+        .addScaledVector(nrm, L * b.out * b.len * 0.95)
+        .add(new THREE.Vector3(0, L * b.drop * b.len * 1.25, -L * b.len * 0.30));
+      const curve = new THREE.CatmullRomCurve3([p0, p1, p2]);
+      // Tapered: radius 1 -> 0.15 along the length, so the tip tapers to a point.
+      const segs = 8;
+      const radius = L * 0.0042;
+      const geo = new THREE.TubeGeometry(curve, segs, radius, 5, false);
+      const pos = geo.attributes.position as THREE.BufferAttribute;
+      for (let i = 0; i < pos.count; i++) {
+        // TubeGeometry lays out segments along u; shrink each ring toward the tip
+        const seg = Math.floor(i / 6) / segs;
+        const k = 1 - 0.85 * seg;
+        const c = curve.getPointAt(Math.min(1, seg));
+        pos.setXYZ(i,
+          c.x + (pos.getX(i) - c.x) * k,
+          c.y + (pos.getY(i) - c.y) * k,
+          c.z + (pos.getZ(i) - c.z) * k);
+      }
+      geo.computeVertexNormals();
+      const mesh = new THREE.Mesh(geo, barbelMat);
+      mesh.frustumCulled = false;
+      group.add(mesh);
+    }
   }
 
   // ---- eyes: seated on the surface normal so only the lens cap protrudes
