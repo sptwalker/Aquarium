@@ -67,7 +67,11 @@ const FISH_SETUP: Array<[FishSpecies, number]> = [
   ['oranda', 0.30],
   ['comet', 0.66],
 ];
-type FishView = { group: THREE.Group; uniforms: ReturnType<typeof makeFish>['uniforms'] };
+type FishView = {
+  group: THREE.Group;
+  uniforms: ReturnType<typeof makeFish>['uniforms'];
+  updateTail: ReturnType<typeof makeFish>['updateTail'];
+};
 const fishViews: FishView[] = [];
 
 for (const [species, hunger] of FISH_SETUP) {
@@ -77,7 +81,7 @@ for (const [species, hunger] of FISH_SETUP) {
   built.group.scale.setScalar(s);
   scene.add(built.group);
   school.add(species, hunger);
-  fishViews.push({ group: built.group, uniforms: built.uniforms });
+  fishViews.push({ group: built.group, uniforms: built.uniforms, updateTail: built.updateTail });
 }
 
 // ---- food
@@ -157,6 +161,7 @@ declare global {
     __ready?: boolean;
     __stats?: unknown;
     __quality?: () => Record<string, unknown> & { name: string };
+    __tail?: () => { min: number[]; max: number[]; tip: number[] } | null;
     __probe?: () => {
       foodLive: number;
       hungerSum: number;
@@ -252,6 +257,9 @@ const tmpMat = new THREE.Matrix4();
 const upVec = new THREE.Vector3(0, 1, 0);
 const lookTarget = new THREE.Vector3();
 
+const tmpInvQuat = new THREE.Quaternion();
+const flowLocal = new THREE.Vector3();
+
 function updateFish(dt: number, t: number) {
   school.update(dt, t, foods, obstacles, input.state.mouse3, input.state.mouseSpeed);
   for (let i = 0; i < school.fish.length; i++) {
@@ -266,7 +274,7 @@ function updateFish(dt: number, t: number) {
       tmpQuat.setFromRotationMatrix(tmpMat);
       // lookAt makes -Z face the target; our fish noses along +Z
       tmpQuat.multiply(flipQuat);
-      v.group.quaternion.slerp(tmpQuat, 1 - Math.exp(-dt * 6));
+      v.group.quaternion.slerp(tmpQuat, 1 - Math.exp(-dt * 3.2));
     }
     // gentle vertical tilt from swimming direction handled by lookAt
 
@@ -277,6 +285,12 @@ function updateFish(dt: number, t: number) {
     v.uniforms.uMouth.value = b.mouth;
     v.uniforms.uHueA.value.copy(STYLES[b.species].hueA);
     v.uniforms.uHueB.value.copy(STYLES[b.species].hueB);
+
+    // the tail cloth feels water streaming past, i.e. the fish's own motion
+    // reversed, expressed in the fish's local frame
+    tmpInvQuat.copy(v.group.quaternion).invert();
+    flowLocal.copy(b.vel).negate().applyQuaternion(tmpInvQuat);
+    v.updateTail(dt, t, flowLocal);
   }
 }
 
@@ -361,6 +375,15 @@ function frame() {
 
 window.__ready = true;
 window.__quality = () => ({ ...QUALITY[quality], name: quality });
+window.__tail = () => {
+  const v = fishViews[0];
+  const g = (v.group.children.find((c) => c instanceof THREE.Mesh && (c.geometry as THREE.BufferGeometry).attributes.uv?.count === 26 * 16) as THREE.Mesh | undefined);
+  if (!g) return null;
+  const attr = g.geometry.attributes.position as THREE.BufferAttribute;
+  const bb = new THREE.Box3().setFromBufferAttribute(attr);
+  const tip = new THREE.Vector3().fromBufferAttribute(attr, 25 * 16 + 15);
+  return { min: bb.min.toArray().map((n) => +n.toFixed(3)), max: bb.max.toArray().map((n) => +n.toFixed(3)), tip: tip.toArray().map((n) => +n.toFixed(3)) };
+};
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) clock.getDelta();   // drop the gap so physics doesn't jump
 });

@@ -30,8 +30,8 @@ type Boid = {
 const BOUNDS = {
   x: TANK.hw - 0.85,
   z: TANK.hd - 0.7,
-  yMin: SAND_TOP + 0.65,
-  yMax: WATER_Y - 0.45,
+  yMin: SAND_TOP + 1.05,
+  yMax: WATER_Y - 0.55,
 };
 
 export class School {
@@ -78,7 +78,7 @@ export class School {
     }
   }
 
-  update(dt: number, t: number, foods: Food[], obstacles: THREE.Vector3[], mouse3: THREE.Vector3 | null, mouseSpeed: number) {
+  update(dt: number, _t: number, foods: Food[], obstacles: THREE.Vector3[], mouse3: THREE.Vector3 | null, mouseSpeed: number) {
     const bounds = BOUNDS;
 
     if (mouse3 && mouseSpeed > 0.55) {
@@ -188,24 +188,31 @@ export class School {
 
       // ---- integrate steering
       desired.normalize();
-      const baseSpeed = (0.85 + 0.55 * (1 - hungerK * 0.5)) * (f.species === 'comet' ? 1.25 : 1.0);
-      const speedTarget = baseSpeed * (1 - f.focus * 0.55) * (1 + f.fear * 1.6);
-      f.vel.lerp(desired.multiplyScalar(speedTarget), 1 - Math.exp(-dt * 2.4));
+      // slow, heavy water feel: less speed, gentler acceleration
+      const baseSpeed = (0.62 + 0.38 * (1 - hungerK * 0.5)) * (f.species === 'comet' ? 1.20 : 1.0);
+      const speedTarget = baseSpeed * (1 - f.focus * 0.55) * (1 + f.fear * 1.5);
+      f.vel.lerp(desired.multiplyScalar(speedTarget), 1 - Math.exp(-dt * 1.15));
       const sp = f.vel.length();
-      if (sp > 2.4) f.vel.multiplyScalar(2.4 / sp);
+      if (sp > 1.7) f.vel.multiplyScalar(1.7 / sp);
       f.pos.addScaledVector(f.vel, dt);
 
-      // clamp inside glass
+      // clamp inside the glass. The lower bound keeps the belly and anal fin
+      // clear of the sand: a fish's body centre sits roughly one girth plus fin
+      // span above its lowest point, not a fixed small offset.
       f.pos.x = THREE.MathUtils.clamp(f.pos.x, -TANK.hw + 0.35, TANK.hw - 0.35);
       f.pos.z = THREE.MathUtils.clamp(f.pos.z, -TANK.hd + 0.30, TANK.hd - 0.30);
-      f.pos.y = THREE.MathUtils.clamp(f.pos.y, SAND_TOP + 0.20, WATER_Y - 0.18);
+      f.pos.y = THREE.MathUtils.clamp(f.pos.y, SAND_TOP + 0.95, WATER_Y - 0.30);
 
       // ---- swim animation params
-      const targetAmp = THREE.MathUtils.clamp(sp * 0.075 + 0.012, 0, 0.22) * (1 + f.fear * 0.4);
-      f.swimAmp += (targetAmp - f.swimAmp) * (1 - Math.exp(-dt * 3));
-      f.swimFreq = (f.species === 'comet' ? 6.6 : 8.0) + sp * 2.2 + f.fear * 5;
+      // Goldfish cruise lazily: a calm tail beat is ~0.7 Hz and only speeds up
+      // when startled. uSwimFreq is angular (rad/s), so keep it low.
+      const targetAmp = THREE.MathUtils.clamp(sp * 0.055 + 0.008, 0, 0.18) * (1 + f.fear * 0.35);
+      f.swimAmp += (targetAmp - f.swimAmp) * (1 - Math.exp(-dt * 2.2));
+      f.swimFreq = (f.species === 'comet' ? 2.6 : 3.2) + sp * 1.0 + f.fear * 3.0;
+      // integrate phase on the CPU: passing t*freq as a phase cancels the
+      // shader's own time term and freezes the wave, so accumulate instead
+      f.phase += f.swimFreq * dt;
       f.mouth = Math.max(0, f.mouth - dt * 1.8);
-      f.phase = t * f.swimFreq;
     }
   }
 }

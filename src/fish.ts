@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { NOISE, SWIM, ENV, CAUSTIC } from './glsl';
 import type { Shared } from './scene';
+import { FinCloth } from './cloth';
 
 export type FishSpecies = 'fantail' | 'oranda' | 'ryukin' | 'comet';
 
@@ -119,16 +120,47 @@ function buildBodyGeometry(style: FishStyle, segs = 46, radial = 22): THREE.Buff
   return g;
 }
 
-/** Fin membrane: a fan of quads with radial veins. Built in local space. */
+/** Builds the caudal fin's rest pose as a cloth grid (cols across, rows out). */
+function makeTailCloth(style: FishStyle): FinCloth {
+  const L = style.length;
+  const cols = 26;
+  const rows = 16;
+  // comets carry a long flowing tail; fancy varieties a shorter fan
+  const span = L * (style.girth < 0.3 ? 0.62 : 0.44);
+  const rootZ = -L * 0.46;
+  const rest = new Float32Array(cols * rows * 3);
+
+  for (let i = 0; i < cols; i++) {
+    const u = i / (cols - 1);
+    const s = u * 2 - 1;
+    for (let j = 0; j < rows; j++) {
+      const d = j / (rows - 1);
+      const notch = 1.0 - 0.40 * Math.exp(-s * s * 7.0);
+      const z = rootZ - d * span * notch;
+      const y = s * Math.pow(d, 0.82) * L * 0.30 * (1 + 0.10 * Math.sin(Math.abs(s) * 2.6));
+      const x = s * d * L * 0.09 + d * d * Math.cos(s * 1.9) * L * 0.05;
+      const o = (i * rows + j) * 3;
+      rest[o] = x;
+      rest[o + 1] = y + style.girth * 0.02;
+      rest[o + 2] = z;
+    }
+  }
+  return new FinCloth(cols, rows, rest, 1, {
+    span,
+    flutterFreq: 2.6,
+    flutterPhase: Math.random() * 6.28,
+    flutterAmp: 0.26,
+  });
+}
 function makeFinGeometry(
-  kind: 'dorsal' | 'caudal' | 'pectoral' | 'anal',
+  kind: 'dorsal' | 'pectoral' | 'anal',
   style: FishStyle,
 ): THREE.BufferGeometry {
   const L = style.length;
   const pos: number[] = [];
   const uvs: number[] = [];
   const idx: number[] = [];
-  const segsU = kind === 'caudal' ? 30 : 16;
+  const segsU = 16;
   const segsV = 14;
 
   const shape = (u: number, v: number): THREE.Vector3 => {
@@ -143,27 +175,15 @@ function makeFinGeometry(
         const h = (L * 0.22) * Math.pow(arc, 0.75) * veined;
         return new THREE.Vector3(s * 0.012, style.girth * 0.74 + d * h, z + Math.sin(s * 3) * 0.02);
       }
-      case 'caudal': {
-        // Rooted fan: starts at the peduncle (d=0) and flares out, so it never
-        // reads as a detached shape floating behind the body.
-        const notch = 1.0 - 0.40 * Math.exp(-s * s * 7.0);
-        const rootZ = -L * 0.46;
-        // comets carry a long flowing tail; fancy varieties a shorter fan
-        const tailSpan = L * (style.girth < 0.3 ? 0.62 : 0.42);
-        const z = rootZ - d * tailSpan * veined * notch;
-        const y = s * Math.pow(d, 0.82) * L * 0.30 * (1.0 + 0.10 * Math.sin(Math.abs(s) * 2.6));
-        const x = s * d * L * 0.09 + d * d * Math.cos(s * 1.9) * L * 0.05;
-        return new THREE.Vector3(x, y + style.girth * 0.02, z);
+      case 'anal': {
+        const z = -L * 0.30;
+        const h = L * 0.20 * veined;
+        return new THREE.Vector3(s * 0.02, -style.girth * 0.72 - d * h, z - u * L * 0.10 - d * 0.05);
       }
       case 'pectoral': {
         const z = L * 0.10;
         const len = L * 0.34 * veined;
         return new THREE.Vector3(d * len * (0.25 + Math.abs(s) * 0.8), style.girth * 0.05 + s * d * len * 0.62, z - d * len * 0.5);
-      }
-      case 'anal': {
-        const z = -L * 0.30;
-        const h = L * 0.20 * veined;
-        return new THREE.Vector3(s * 0.02, -style.girth * 0.72 - d * h, z - u * L * 0.10 - d * 0.05);
       }
     }
   };
@@ -212,12 +232,14 @@ export function makeFish(style: FishStyle, shared: Shared): {
   group: THREE.Group;
   uniforms: FishUniforms;
   body: THREE.Mesh;
+  tail: FinCloth;
+  updateTail: (dt: number, time: number, flow: THREE.Vector3) => void;
 } {
   const uniforms: FishUniforms = {
     uTime: shared.uTime,
     uSwimPhase: { value: Math.random() * 10 },
     uSwimAmp: { value: 0.05 },
-    uSwimFreq: { value: 8.5 },
+    uSwimFreq: { value: 3.0 },
     uLen: { value: style.length },
     uCaustic: shared.uCaustic,
     uSunDir: shared.uSunDir,
@@ -423,8 +445,33 @@ export function makeFish(style: FishStyle, shared: Shared): {
   body.frustumCulled = false;
   group.add(body);
 
-  const finDefs: Array<['dorsal' | 'caudal' | 'pectoral' | 'anal', number, number]> = [
-    ['caudal', 0, 0],
+  // caudal fin: driven by a Verlet cloth, so its vertices are already final
+  // in local space — it must not also get the shader swim wave applied.
+  const tail = makeTailCloth(style);
+  const tailMat = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    uniforms,
+    vertexShader: /* glsl */ `
+      varying vec2 vUv;
+      varying vec3 vWorld;
+      varying vec3 vNormal;
+      void main(){
+        vUv = uv;
+        vWorld = (modelMatrix * vec4(position, 1.0)).xyz;
+        vNormal = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * viewMatrix * vec4(vWorld, 1.0);
+      }
+    `,
+    fragmentShader: finMat.fragmentShader,
+  });
+  const tailMesh = new THREE.Mesh(tail.geometry, tailMat);
+  tailMesh.frustumCulled = false;
+  tailMesh.renderOrder = 3;
+  group.add(tailMesh);
+
+  const finDefs: Array<['dorsal' | 'pectoral' | 'anal', number, number]> = [
     ['dorsal', 0, 0],
     ['pectoral', 1, 0],
     ['pectoral', -1, 0],
@@ -437,9 +484,18 @@ export function makeFish(style: FishStyle, shared: Shared): {
     fm.frustumCulled = false;
     fm.renderOrder = 3;
     if (side !== 0) fm.scale.x = side;
-    if (kind === 'caudal') fm.rotation.x = 0.04;
     group.add(fm);
   }
+
+  // root motion source: the body's own wave, so the tail lags behind the fish
+  const swimOffsetAt = (z: number) => {
+    const t = Math.min(1, Math.max(0, z / uniforms.uLen.value + 0.5));
+    const a = THREE.MathUtils.smoothstep(1 - t, 0, 0.55);
+    return a * a * uniforms.uSwimAmp.value * Math.sin((1 - t) * 5.4 - uniforms.uSwimPhase.value);
+  };
+  const updateTail = (dt: number, time: number, flow: THREE.Vector3) => {
+    tail.update(dt, time, swimOffsetAt, flow);
+  };
 
   // eyes: glossy amber-irised spheres with a pupil
   const eyeGeo = new THREE.SphereGeometry(style.girth * 0.105, 18, 12);
@@ -473,7 +529,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
     group.add(eye);
   }
 
-  return { group, uniforms, body };
+  return { group, uniforms, body, tail, updateTail };
 }
 
 export { STYLES };

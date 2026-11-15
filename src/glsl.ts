@@ -33,7 +33,7 @@ uniform float uLen;
 float swimOffset(float z){
   float t = clamp(z / uLen + 0.5, 0.0, 1.0);      // 0 at tail .. 1 at nose
   float a = smoothstep(0.0, 0.55, 1.0 - t);        // grows toward tail
-  float w = sin((1.0 - t) * 5.4 - uTime * uSwimFreq + uSwimPhase);
+  float w = sin((1.0 - t) * 5.4 - uSwimPhase);     // phase is integrated on the CPU
   return a * a * uSwimAmp * w;
 }
 vec3 swimBend(vec3 p){
