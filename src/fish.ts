@@ -51,41 +51,74 @@ const STYLES: Record<FishSpecies, FishStyle> = {
   },
 };
 
+// Body radius along the axis, as (t, r) control points with t measured
+// nose-ward: 0 = caudal peduncle, 1 = mouth.
+//
+// A piecewise formula had a value jump at t=0.86 (0.455 before the snout
+// branch, 0.600 after it), which rendered as a hard ridge ringing the head.
+// Interpolating control points keeps the curve C1, so no ledge can appear.
+const PROFILE_KEYS: ReadonlyArray<readonly [number, number]> = [
+  [0.00, 0.09],
+  [0.07, 0.20],
+  [0.15, 0.38],   // caudal peduncle (the narrow waist)
+  [0.26, 0.60],
+  [0.38, 0.80],
+  [0.50, 0.93],
+  [0.62, 1.00],   // widest point, just behind the gill cover
+  [0.72, 0.99],
+  [0.80, 0.94],
+  [0.86, 0.86],   // behind the eye
+  [0.90, 0.78],
+];
+// Above this the snout becomes a circular cap rather than a taper, so the
+// nose is blunt and rounded the way a goldfish's is, not a cone.
+const NOSE_T0 = 0.90;
+
 function bodyProfile(z: number): number {
-  // z in [-0.5, 0.5]; 0.5 = nose. Returns a 0..1 radius multiplier.
-  // Egg-shaped goldfish body: deep behind the head, tapering hard into the
-  // caudal peduncle, with a short rounded snout.
-  const t = THREE.MathUtils.clamp((z + 0.5) / 1.0, 0, 1);
-  if (t < 0.14) {
-    // caudal peduncle: the narrow waist that makes a fish read as a fish
-    const k = t / 0.14;
-    return 0.13 + 0.22 * k * k;
-  }
-  if (t < 0.86) {
-    // main body: rises quickly behind the head, falls gently to the peduncle
-    const k = (t - 0.14) / 0.72;
-    const peak = Math.sin(Math.pow(k, 0.70) * Math.PI * 0.95);
-    return 0.35 + 0.67 * peak;
-  }
-  // snout: short and blunt, never a spike
-  const k = (t - 0.86) / 0.14;
-  return Math.sqrt(Math.max(0, 1 - k * k)) * 0.46 + 0.14;
+  const t = THREE.MathUtils.clamp(z + 0.5, 0, 1);
+  const K = PROFILE_KEYS;
+  let i = 0;
+  while (i < K.length - 2 && t > K[i + 1][0]) i++;
+  const [t1, p1] = K[i];
+  const [t2, p2] = K[i + 1];
+  const p0 = K[Math.max(0, i - 1)][1];
+  const p3 = K[Math.min(K.length - 1, i + 2)][1];
+  const s = (t - t1) / Math.max(1e-6, t2 - t1);
+  const s2 = s * s, s3 = s2 * s;
+  const base = 0.5 * (
+    2 * p1 +
+    (-p0 + p2) * s +
+    (2 * p0 - 5 * p1 + 4 * p2 - p3) * s2 +
+    (-p0 + 3 * p1 - 3 * p2 + p3) * s3
+  );
+  if (t <= NOSE_T0) return base;
+  // hemispherical snout
+  const k = (t - NOSE_T0) / (1 - NOSE_T0);
+  return 0.78 * Math.sqrt(Math.max(0, 1 - k * k));
 }
 
 /**
  * Half-width of the body surface at a given axial position and height.
  * Mirrors the cross-section maths in buildBodyGeometry, so fins and eyes can
- * be planted exactly on the skin instead of at guessed offsets.
+ * be planted on the skin instead of at guessed offsets.
  */
 function surfaceHalfWidth(style: FishStyle, z: number, y: number): number {
   const u = z / style.length + 0.5;
-  const t = u * 2 - 1;
   const prof = bodyProfile(u - 0.5) * style.girth;
-  const headK = THREE.MathUtils.smoothstep(t, 0.62, 1.0);
-  const halfY = prof * 0.86 * (1.0 - headK * 0.16);
-  const rx = prof * 0.70 * (1.0 - headK * 0.20);
-  const k = THREE.MathUtils.clamp(Math.abs(y) / Math.max(1e-4, halfY), 0, 0.999);
+  const rx = prof * 0.70;
+  const ry = prof * (y >= 0 ? 0.84 : 1.00);
+  const k = THREE.MathUtils.clamp(Math.abs(y) / Math.max(1e-4, ry), 0, 0.999);
   return rx * Math.sqrt(1 - k * k);
+}
+
+/** Height of the top of the body at axial position z. */
+function surfaceTop(style: FishStyle, z: number): number {
+  return bodyProfile(z / style.length) * style.girth * 0.84;
+}
+
+/** Height of the underside of the body at axial position z. */
+function surfaceBottom(style: FishStyle, z: number): number {
+  return -bodyProfile(z / style.length) * style.girth * 1.00;
 }
 
 function buildBodyGeometry(style: FishStyle, segs = 46, radial = 22): THREE.BufferGeometry {
@@ -103,25 +136,22 @@ function buildBodyGeometry(style: FishStyle, segs = 46, radial = 22): THREE.Buff
     for (let j = 0; j < cols; j++) {
       const a = (j / radial) * Math.PI * 2;
       const ca = Math.cos(a), sa = Math.sin(a);
-      // cross-section: moderately compressed, taller than wide.
-      // Body depth lands near 0.5 of length, which is what goldfish look like;
-      // anything deeper reads as a disc.
-      let x = ca * prof * 0.70;
-      let y = sa * prof * 0.86;
-      // dorsal ridge + belly curve
-      y += Math.max(0, sa) * prof * 0.14;
-      y -= Math.max(0, -sa) * prof * 0.18;
-      // head keeps most of its depth: a shrunken head is what made these read
-      // as coins rather than fish
-      const headK = THREE.MathUtils.smoothstep(t, 0.62, 1.0);
-      y *= 1.0 - headK * 0.16;
-      x *= 1.0 - headK * 0.20;
+      // Cross-section: an ellipse with a taller ventral half, so the belly
+      // hangs lower than the back rises. Keeping it a true ellipse (rather
+      // than adding ridge offsets) is what lets surfaceHalfWidth invert it
+      // exactly, so fins and eyes land on the skin.
+      const rx = prof * 0.70;
+      const ryUp = prof * 0.84;
+      const ryDn = prof * 1.00;
+      let x = ca * rx;
+      let y = sa * (sa >= 0 ? ryUp : ryDn);
       // mouth indentation
       const mouth = THREE.MathUtils.smoothstep(t, 0.90, 1.0);
-      y -= mouth * Math.abs(Math.cos(a)) * prof * 0.10;
-      // subtle asymmetry / organic
-      const wob = 1 + 0.02 * Math.sin(a * 5 + u * 22) + 0.012 * Math.sin(a * 9 - u * 13);
-      positions.push(x * wob, y * wob, z);
+      y -= mouth * Math.abs(ca) * prof * 0.08;
+      // No per-vertex sinusoidal "organic" wobble here: varying its phase with
+      // u carved rings around the body, which is exactly the raised collar the
+      // head was showing. Texture and scales supply that detail instead.
+      positions.push(x, y, z);
       uvs.push((j / radial), u);
     }
   }
@@ -191,28 +221,46 @@ function makeFinGeometry(
     const veined = 1 + 0.012 * Math.sin(s * 26.0);
     switch (kind) {
       case 'dorsal': {
-        // soft sail along the back, kept low so it hugs the body
+        // Sail along the back. Its base follows the body's own curve so it
+        // grows out of the spine instead of sitting on it like a flag.
         const z = -L * 0.06 - u * L * 0.34;
         const arc = Math.max(0, Math.sin(Math.min(1, (u - 0.04) / 0.96) * Math.PI));
-        const h = (L * 0.13) * Math.pow(arc, 0.75) * veined;
-        return new THREE.Vector3(s * 0.012, style.girth * 0.80 + d * h, z + Math.sin(s * 3) * 0.02);
+        const h = (L * 0.14) * Math.pow(arc, 0.75) * veined;
+        const baseY = surfaceTop(style, z) - style.girth * 0.03;
+        // lean the top of the sail back and curl it slightly
+        const leanZ = d * d * h * 0.22;
+        const curlX = Math.sin(s * 1.2) * d * h * 0.10;
+        return new THREE.Vector3(curlX + s * 0.006, baseY + d * h, z - leanZ);
       }
       case 'anal': {
-        const z = -L * 0.30;
-        const h = L * 0.11 * veined;
-        return new THREE.Vector3(s * 0.02, -style.girth * 0.78 - d * h, z - u * L * 0.10 - d * 0.05);
+        // same idea underneath, shorter and leaning back
+        const z = -L * 0.28;
+        const h = L * 0.12 * veined;
+        const baseY = surfaceBottom(style, z) + style.girth * 0.02;
+        const leanZ = d * d * h * 0.25;
+        return new THREE.Vector3(s * 0.006, baseY - d * h, z - u * L * 0.08 - leanZ);
       }
       case 'pectoral': {
-        // small paddle rooted exactly on the flank, swept back along the body
+        // A paddle that leaves the flank tangentially. The inner edge is laid
+        // along the body ellipse so the root is buried, and the membrane curls
+        // outward instead of being a flat triangle pasted to the side.
         const z0 = L * 0.14;
-        const len = L * 0.13 * veined;
+        const len = L * 0.15 * veined;
         const y0 = style.girth * 0.02;
-        const rootX = surfaceHalfWidth(style, z0, y0) * 0.92;
-        const width = d * len * (0.36 + 0.26 * Math.abs(s));
+        const rootX = surfaceHalfWidth(style, z0, y0) * 0.98;
+
+        // local frame at the root: outward along +x, back along -z
+        const sweep = d * len * 0.95;
+        const out = d * len * 0.55;
+        // the fan opens as it extends
+        const spread = s * d * len * (0.42 + 0.22 * Math.abs(s));
+        // curl the tip away from the body so it reads as a fin, not a blade
+        const curl = d * d * len * 0.28;
+
         return new THREE.Vector3(
-          rootX + d * len * 0.75,
-          y0 + s * width * 0.70,
-          z0 - d * len * 0.9,
+          rootX + out + curl * 0.4,
+          y0 + spread * 0.85 - d * len * 0.06,
+          z0 - sweep + curl * 0.3,
         );
       }
     }
@@ -427,9 +475,13 @@ export function makeFish(style: FishStyle, shared: Shared): {
     `,
   });
 
+  // Fins render opaque. As thin transparent sheets they let the far-side fin
+  // and the body behind them blend in, which is precisely the "fin visible
+  // through the fish" artifact. Being solid also removes all sorting problems
+  // (a double-sided translucent sheet blends with itself, doubling alpha).
   const finMat = new THREE.ShaderMaterial({
-    transparent: true,
-    depthWrite: false,
+    transparent: false,
+    depthWrite: true,
     side: THREE.DoubleSide,
     uniforms,
     vertexShader: /* glsl */ `
@@ -477,13 +529,11 @@ export function makeFish(style: FishStyle, shared: Shared): {
         col += uFinTint * fres * 0.22;
         col += vec3(1.0) * pow(max(0.0, dot(reflect(-L, N), V)), 60.0) * 0.10;
         col = min(col, vec3(1.6));
-        // Fins are thin membranes, but a *very* transparent fin lets the body
-        // and the far-side fins show through, which reads as the fin being
-        // "seen through the model". Keep them solid enough to occlude.
-        float a = mem * (0.62 + 0.22 * fres + trans * 0.10);
-        a *= smoothstep(1.0, 0.955, uv.y);       // fade only at the far tip
-        a *= 0.55 + 0.45 * smoothstep(0.0, 0.22, uv.y);  // rooted edge is solid
-        gl_FragColor = vec4(col, clamp(a, 0.0, 0.95));
+        // Fins are solid geometry; the outlined shape comes from the mesh, not
+        // from alpha. The membrane's thinness is expressed as light through it.
+        float thin = smoothstep(0.0, 0.85, uv.y);
+        col = mix(col, col * 0.72, thin * 0.35);
+        gl_FragColor = vec4(col, 1.0);
       }
     `,
   });
@@ -556,11 +606,11 @@ export function makeFish(style: FishStyle, shared: Shared): {
   void pupilGeo;
   const eyeMat = new THREE.ShaderMaterial({
     uniforms,
-    // The lens sits where the skin is, so without a depth bias the two
-    // surfaces z-fight and the eye appears to bleed through the head.
-    polygonOffset: true,
-    polygonOffsetFactor: -4,
-    polygonOffsetUnits: -4,
+    // No polygon offset here. A negative offset pulls the whole sphere toward
+    // the camera in depth space, including the half buried inside the head —
+    // that half then wins the depth test against the skull and the eye appears
+    // to be visible *through* the fish. The lens is sunk inside the head
+    // instead, so only its cap is exposed and no bias is needed.
     vertexShader: 'varying vec3 vN; varying vec3 vW; void main(){ vN = normalize(mat3(modelMatrix) * normal); vW = (modelMatrix*vec4(position,1.0)).xyz; gl_Position = projectionMatrix * viewMatrix * vec4(vW,1.0); }',
     fragmentShader: /* glsl */ `
       ${ENV}
