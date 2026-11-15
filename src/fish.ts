@@ -172,7 +172,11 @@ function buildBodyGeometry(style: FishStyle, segs = 64, radial = 32): THREE.Buff
     for (let j = 0; j < radial; j++) {
       const a = i * cols + j;
       const b = a + cols;
-      indices.push(a, b, a + 1, b, b + 1, a + 1);
+      // Counter-clockwise when seen from outside. The previous order (a, b, a+1)
+      // produced inward-facing normals, so the front faces were culled and the
+      // far side of the body was visible through it — the model looked
+      // transparent, and eyes/tail showed through from the far side.
+      indices.push(a, a + 1, b, b, a + 1, b + 1);
     }
   }
   const g = new THREE.BufferGeometry();
@@ -282,7 +286,9 @@ function buildFin(
     for (let j = 0; j < segsV; j++) {
       const a = i * cols + j;
       const b = a + cols;
-      idx.push(a, b, a + 1, b, b + 1, a + 1);
+      // same winding correction as the body: outward-facing, so lighting and
+      // any back-face culling behave
+      idx.push(a, a + 1, b, b, a + 1, b + 1);
     }
   }
   const g = new THREE.BufferGeometry();
@@ -536,6 +542,8 @@ export function makeFish(style: FishStyle, shared: Shared): {
       ${ENV}
       ${CAUSTIC}
       uniform vec3 uFinTint;
+      uniform vec3 uHueA;
+      uniform vec3 uHueB;
       varying vec2 vUv;
       varying vec3 vWorld;
       varying vec3 vNormal;
@@ -545,7 +553,14 @@ export function makeFish(style: FishStyle, shared: Shared): {
         rays = mix(0.65, 1.0, rays);
         // the membrane thins toward the trailing edge
         float thin = smoothstep(0.05, 0.95, vUv.y);
-        vec3 base = uFinTint * (0.55 + 0.45 * rays) * (1.0 - 0.22 * thin);
+
+        // Root weld: near vUv.y = 0 the fin takes the body's own colour, so the
+        // silhouette edge disappears and the fin appears to grow out of the
+        // skin instead of being a card laid against it.
+        vec3 bodyCol = mix(uHueA, uHueB, 0.45);
+        float rootBlend = 1.0 - smoothstep(0.0, 0.28, vUv.y);
+        vec3 base = mix(uFinTint, bodyCol, rootBlend * 0.85);
+        base *= (0.55 + 0.45 * rays) * (1.0 - 0.22 * thin);
 
         vec3 N = normalize(vNormal);
         vec3 V = normalize(cameraPosition - vWorld);
@@ -557,52 +572,136 @@ export function makeFish(style: FishStyle, shared: Shared): {
 
         vec3 col = base * (uSunColor * atten * (0.20 + 0.85 * casc) * (0.55 + ndl * 0.65 + back * 0.5));
         col += base * vec3(0.030, 0.045, 0.050);
+
+        // The root is in contact with the body, so it must not pick up the
+        // thin-membrane backlight that the free edge does.
+        col = mix(col, bodyCol * (uSunColor * atten * (0.18 + 0.8 * casc) * 0.8
+                     + vec3(0.024, 0.034, 0.038)), rootBlend);
+
         gl_FragColor = vec4(col, 1.0);
       }
     `,
   });
 
-  // ---- mouth: real geometry, a short inward funnel at the snout tip.
-  // A painted oval was invisible from the side, which is why the fish looked
-  // mouthless. This cone is dark inside and opens with uMouth.
-  //
-  // ConeGeometry's apex is at +y. rotateX(-PI/2) sends +y to +z, so the apex
-  // points forward and the opening faces back into the head — the reverse of
-  // what we want. rotateX(+PI/2) puts the apex at -z (inside the head) and the
-  // open base at +z, facing out of the snout.
-  const mouthOpenR = style.length * 0.026;
-  const mouthGeo = new THREE.ConeGeometry(mouthOpenR, style.length * 0.055, 16, 1, true);
-  mouthGeo.rotateX(-Math.PI / 2);
-  const mouthMat = new THREE.ShaderMaterial({
-    side: THREE.BackSide,
+  // ---- mouth: two lips meeting at a slit, not a funnel.
+  // A cone always reads as a beak; goldfish have a thick upper lip and a
+  // slightly receding lower jaw. Each lip is a half-torus arc pressed onto the
+  // snout, and uMouth rotates them apart around the slit.
+  const lipR = style.length * 0.019;      // arc radius
+  const lipThick = style.length * 0.0055; // how fat the lip roll is
+  const lipMat = new THREE.ShaderMaterial({
     uniforms,
     vertexShader: /* glsl */ `
-      varying vec3 vN; varying vec3 vW;
+      uniform float uMouth;
+      varying vec3 vN;
+      varying vec3 vW;
+      varying float vSide;
       void main(){
+        vec3 p = position;
+        // local y > 0 is the upper lip; open by pushing each away from the slit
+        float sign_ = p.y >= 0.0 ? 1.0 : -1.0;
+        p.y += sign_ * uMouth * 0.020;
+        vSide = sign_;
         vN = normalize(mat3(modelMatrix) * normal);
-        vW = (modelMatrix * vec4(position, 1.0)).xyz;
+        vW = (modelMatrix * vec4(p, 1.0)).xyz;
         gl_Position = projectionMatrix * viewMatrix * vec4(vW, 1.0);
       }
     `,
     fragmentShader: /* glsl */ `
-      varying vec3 vN; varying vec3 vW;
+      ${NOISE}
+      ${CAUSTIC}
+      uniform vec3 uHueA;
+      uniform vec3 uHueB;
+      uniform float uMouth;
+      varying vec3 vN;
+      varying vec3 vW;
+      varying float vSide;
       void main(){
-        // dark throat, warm rim, so it reads as a hole rather than a shape
         vec3 N = normalize(vN);
         vec3 V = normalize(cameraPosition - vW);
-        float rim = pow(1.0 - abs(dot(N, V)), 2.0);
-        vec3 col = mix(vec3(0.035, 0.010, 0.008), vec3(0.30, 0.09, 0.06), rim);
+        vec3 L = normalize(uSunDir);
+        float casc = causticSample(vW, uTime);
+        float atten = exp(-max(0.0, 4.05 - vW.y) * 0.10);
+        float ndl = max(0.0, dot(N, L));
+        float fres = pow(1.0 - max(0.0, dot(N, V)), 3.0);
+
+        // fleshy lip: same family as the body, only slightly warmer. Mixing
+        // toward a pale pink made them read as white blobs stuck on the snout.
+        vec3 lipCol = mix(uHueA, uHueB, 0.35) * vec3(1.06, 0.72, 0.62);
+        // the inner edge, facing the slit, is dark and wet
+        float inner = smoothstep(0.25, 0.85, -vSide * N.y);
+        lipCol = mix(lipCol, vec3(0.16, 0.045, 0.035), inner * 0.85);
+
+        vec3 col = lipCol * (uSunColor * (0.14 + 1.1 * casc) * atten * (0.45 + ndl * 0.7)
+                          + vec3(0.030, 0.040, 0.044));
+        // wet rim highlight
+        col += uSunColor * pow(max(0.0, dot(reflect(-L, N), V)), 90.0) * 0.55;
+        col += lipCol * fres * 0.20;
         gl_FragColor = vec4(col, 1.0);
       }
     `,
   });
+
   const group = new THREE.Group();
 
-  const mouth = new THREE.Mesh(mouthGeo, mouthMat);
-  // Recess it into the snout so only the dark opening shows, not a beak.
+  // Build both lips from one arc: a half torus spanning the top, mirrored for
+  // the bottom. Each is capped at the corners so the slit closes properly.
+  const lipArc = new THREE.TorusGeometry(lipR, lipThick, 10, 26, Math.PI);
+  lipArc.rotateZ(Math.PI / 2);   // arc opens toward -y: an upper lip
+  const lipArcLower = lipArc.clone();
+  lipArcLower.rotateZ(Math.PI);  // mirror to make the lower lip
+
   const snoutTip = bodySurface(style, 0.995, 0);
-  mouth.position.set(0, snoutTip.y * 0.55, snoutTip.z - style.length * 0.028);
-  group.add(mouth);
+  const snoutN = bodyNormal(style, 0.995, 0);
+
+  for (const [arc, up] of [[lipArc, 1], [lipArcLower, -1]] as const) {
+    const lip = new THREE.Mesh(arc, lipMat);
+    lip.frustumCulled = false;
+    // Press the lip onto the snout: the far side of the arc is pushed back into
+    // the head, so only the forward-facing roll is visible.
+    // Seat the lip so it is mostly embedded in the snout; only the forward
+    // roll shows. Sunk deeper than it protrudes, or it reads as a ring glued on.
+    lip.position.set(0, snoutTip.y * 0.72, snoutTip.z - style.length * 0.016);
+    lip.lookAt(snoutTip.clone().add(snoutN.clone().multiplyScalar(3)));
+    lip.rotateY(Math.PI);          // face out of the snout
+    lip.position.y += up * lipR * 0.42;
+    group.add(lip);
+  }
+
+  // Dark slit between the lips, so the closed mouth still reads as a mouth.
+  const slitGeo = new THREE.CircleGeometry(lipR * 0.72, 20);
+  const slitMat = new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader: /* glsl */ `
+      uniform float uMouth;
+      varying vec2 vUv;
+      varying vec3 vW;
+      void main(){
+        vUv = uv;
+        // stretch vertically as the jaw opens
+        vec3 p = position;
+        p.y *= 0.30 + uMouth * 1.5;
+        vW = (modelMatrix * vec4(p, 1.0)).xyz;
+        gl_Position = projectionMatrix * viewMatrix * vec4(vW, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uMouth;
+      varying vec2 vUv;
+      varying vec3 vW;
+      void main(){
+        vec2 c = vUv - 0.5;
+        float edge = smoothstep(0.5, 0.16, length(vec2(c.x, c.y * 1.3)));
+        vec3 col = mix(vec3(0.020, 0.006, 0.005), vec3(0.12, 0.03, 0.02), edge);
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `,
+  });
+  const slit = new THREE.Mesh(slitGeo, slitMat);
+  slit.position.set(0, snoutTip.y * 0.72, snoutTip.z - style.length * 0.020);
+  slit.lookAt(snoutTip.clone().add(snoutN.clone().multiplyScalar(3)));
+  slit.rotateY(Math.PI);
+  group.add(slit);
 
   const body = new THREE.Mesh(buildBodyGeometry(style), bodyMat);
   body.frustumCulled = false;
