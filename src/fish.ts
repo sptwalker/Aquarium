@@ -68,15 +68,16 @@ const PROFILE: ReadonlyArray<readonly [number, number]> = [
   [0.18, 0.400],
   [0.28, 0.660],
   [0.38, 0.860],
-  [0.48, 0.965],
-  [0.56, 1.000],   // deepest point, behind the gill cover
-  [0.64, 0.995],
+  [0.48, 0.960],
+  [0.56, 0.990],   // deepest point, behind the gill cover
+  [0.64, 0.985],
   [0.71, 0.950],
-  [0.78, 0.865],
-  [0.85, 0.735],
-  [0.91, 0.580],
-  [0.96, 0.380],
-  [1.00, 0.075],   // blunt snout
+  [0.78, 0.895],
+  [0.85, 0.820],
+  [0.90, 0.740],
+  [0.95, 0.600],
+  [0.98, 0.440],
+  [1.00, 0.280],   // muzzle radius ~28% of max: a rounded nose, not a point
 ];
 
 function smoothProfile(t: number): number {
@@ -107,23 +108,11 @@ function smoothProfile(t: number): number {
  */
 function bodySurface(style: FishStyle, t: number, angle: number): THREE.Vector3 {
   const L = style.length;
-  let r = smoothProfile(t);
+  const r = smoothProfile(t);
   const z = (t - 0.5) * L;
   // the lateral midline sits slightly high, so the belly hangs lower than the
   // back rises — a symmetric tube reads as a sausage
-  let cy = -r * style.depth * L * 0.06;
-
-  // Mouth: a smooth radial depression at the very tip. Doing it here, in the
-  // one surface function, means the surrounding skin stays watertight — an
-  // earlier version indented only the lower half of the snout in the mesh and
-  // left a raised ring around the mouth.
-  const mouthK = THREE.MathUtils.smoothstep(t, 0.93, 1.0);
-  if (mouthK > 0) {
-    // narrow toward the angle pointing forward-ish; deepest at the tip
-    const funnel = mouthK * mouthK * (0.55 + 0.45 * Math.max(0, Math.cos(angle)));
-    r *= 1 - funnel * 0.55;
-    cy += funnel * style.depth * L * 0.05;
-  }
+  const cy = -r * style.depth * L * 0.06;
 
   return new THREE.Vector3(
     Math.cos(angle) * r * style.width * L,
@@ -153,6 +142,7 @@ function bodyNormal(style: FishStyle, t: number, angle: number): THREE.Vector3 {
 
 function buildBodyGeometry(style: FishStyle, segs = 64, radial = 32): THREE.BufferGeometry {
   const positions: number[] = [];
+  const normals: number[] = [];
   const uvs: number[] = [];
   const indices: number[] = [];
   const rows = segs + 1;
@@ -165,6 +155,14 @@ function buildBodyGeometry(style: FishStyle, segs = 64, radial = 32): THREE.Buff
       const angle = (j / radial) * Math.PI * 2;
       p.copy(bodySurface(style, t, angle));
       positions.push(p.x, p.y, p.z);
+
+      // Analytic normals straight from the surface function. computeVertexNormals
+      // averages the faces that share each vertex, and the seam column (j=0 and
+      // j=radial are the same point) belongs to two disconnected fans, so it got
+      // two averaged normals and showed up as a hard line down the flank.
+      const n = bodyNormal(style, t, angle);
+      normals.push(n.x, n.y, n.z);
+
       uvs.push(j / radial, t);
     }
   }
@@ -179,11 +177,40 @@ function buildBodyGeometry(style: FishStyle, segs = 64, radial = 32): THREE.Buff
       indices.push(a, a + 1, b, b, a + 1, b + 1);
     }
   }
+
+  // Close both ends. The body is built as an open tube; without these caps the
+  // snout and the caudal peduncle are holes, and back-face culling lets you see
+  // straight into the fish from the front. That was the last source of the
+  // "see the tail through the head" artifact.
+  const addCap = (t: number, pointForward: boolean) => {
+    const centreIndex = positions.length / 3;
+    const c = bodySurface(style, t, 0);
+    // collapse the cap centre onto the axis
+    const r = smoothProfile(t);
+    positions.push(0, -r * style.depth * style.length * 0.06, c.z);
+    const n = new THREE.Vector3(0, 0, pointForward ? 1 : -1);
+    normals.push(n.x, n.y, n.z);
+    uvs.push(0.5, t);
+
+    const rowBase = pointForward ? segs * cols : 0;
+    for (let j = 0; j < radial; j++) {
+      const v0 = rowBase + j;
+      const v1 = rowBase + j + 1;
+      // Winding: seen from outside the snout (+z) the ring runs counter-
+      // clockwise, so (centre, v0, v1) faces +z. The reverse order faces into
+      // the body and gets culled, which is what left a hole at the nose.
+      if (pointForward) indices.push(centreIndex, v0, v1);
+      else indices.push(centreIndex, v1, v0);
+    }
+  };
+  addCap(1, true);    // snout
+  addCap(0, false);   // caudal peduncle
+
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   g.setIndex(indices);
-  g.computeVertexNormals();
   return g;
 }
 
@@ -413,21 +440,47 @@ export function makeFish(style: FishStyle, shared: Shared): {
       varying vec3 vLocal;
       varying vec2 vUv;
 
-      // Scalloped scale cells on a cylindrical lattice. The angle is derived
-      // from the local position rather than the UV, so the pattern is
-      // continuous where the UV wraps — sampling it in uv space left a seam
-      // running down the flank.
-      float scaleSheen(vec3 lp, out float cellRand){
+      // Overlapping scales.
+      //
+      // Each scale is a rounded cap sitting in a staggered lattice. A point on
+      // the body can be covered by several scales from neighbouring cells, so
+      // we take the highest one. Where a scale's edge crosses a lower one you
+      // get the classic shingled lip — that is the "wave layered" look, and it
+      // cannot be produced by a single cell lookup.
+      //
+      // Returns height in [-1, 1]; rand is the winning cell's random tint.
+      float scaleField(vec3 lp, out float rand, out float lipEdge){
         float ang = atan(lp.y, lp.x) / 6.28318 + 0.5;
-        vec2 g = vec2(ang * 34.0, lp.z * 30.0);
-        g.x += step(1.0, mod(floor(g.y), 2.0)) * 0.5;
-        float row = floor(g.y);
-        // wrap the column count so the last cell meets the first
-        float col = mod(floor(g.x), 34.0);
-        vec2 f = fract(g) - 0.5;
-        float d = length(vec2(f.x * 1.15, f.y));
-        cellRand = fract(sin(dot(vec2(col, row), vec2(12.9898, 78.233))) * 43758.5453);
-        return smoothstep(0.55, 0.20, d);
+        // Dense: real goldfish carry 25-30 scale rows along the flank.
+        vec2 g = vec2(ang * 46.0, lp.z * 52.0);
+        vec2 base = floor(g);
+
+        float best = -2.0;
+        float bestRand = 0.0;
+        vec2 bestId = vec2(0.0);
+
+        for (int dy = -1; dy <= 1; dy++) {
+          for (int dx = -1; dx <= 1; dx++) {
+            vec2 id = base + vec2(float(dx), float(dy));
+            float shift = mod(id.y, 2.0) * 0.5;
+            vec2 c = vec2(id.x + 0.5 + shift, id.y + 0.62);
+            vec2 d = (g - c) * vec2(1.0, 0.86);
+            float r = length(d);
+            float h = 1.0 - r;
+            if (h > best) {
+              best = h;
+              bestId = id;
+            }
+          }
+        }
+        float col = mod(bestId.x + 100.0, 46.0);
+        bestRand = fract(sin(dot(vec2(col, bestId.y), vec2(12.9898, 78.233))) * 43758.5453);
+
+        // A narrow band right at the rim. Kept thin and weak on purpose: a wide
+        // dark band turns the flank into a honeycomb of black outlines.
+        lipEdge = smoothstep(0.16, 0.04, best) * step(0.0, best);
+        rand = bestRand;
+        return clamp(best, -1.0, 1.0);
       }
 
       void main(){
@@ -460,29 +513,78 @@ export function makeFish(style: FishStyle, shared: Shared): {
         float wenN = uWen * head * fbm3(vec2(lp.z * 12.0, lp.y * 9.0));
         col = mix(col, mix(col, vec3(0.92, 0.55, 0.30), 0.45), wenN * 0.55);
 
-        // ---- faint scale sheen (very low contrast; the relief is in the normal)
-        float cellRand;
-        float sm = scaleSheen(vLocal, cellRand);
-        sm *= smoothstep(0.10, 0.28, along) * smoothstep(0.94, 0.72, along);
-        col *= 0.982 + 0.030 * sm;
-        col = mix(col, col * vec3(1.02, 1.0, 0.98), sm * 0.14 * cellRand);
+        // ---- overlapping scales: tint by the winning scale, with a lit lip
+        float cellRand, lipEdge;
+        float hgt = scaleField(vLocal, cellRand, lipEdge);
+        // no scales on the snout; they run all the way back over the peduncle
+        float scaleZone = smoothstep(0.06, 0.20, along) * smoothstep(0.86, 0.72, along);
+        hgt *= scaleZone;
+        lipEdge *= scaleZone;
 
-        // ---- normal relief, same cylindrical lattice
+        // ---- per-scale tint variation, and the raised lip catching light
+        col *= 0.955 + 0.075 * cellRand;
+        col *= 1.0 + hgt * 0.07;
+        col += vec3(0.055, 0.040, 0.028) * lipEdge;
+
+        // ---- mouth, painted on the muzzle.
+        // The snout ends in a small cap facing forward; the mouth is a
+        // horizontal slit across it that parts vertically with uMouth. Painted
+        // here rather than built as geometry, because every rigid lip mesh
+        // looked like a ring hovering in front of a curved snout.
         {
-          float ang = atan(vLocal.y, vLocal.x) / 6.28318 + 0.5;
-          vec2 g = vec2(ang * 34.0, vLocal.z * 30.0);
-          g.x += step(1.0, mod(floor(g.y), 2.0)) * 0.5;
-          vec2 f = fract(g) - 0.5;
-          float d = length(vec2(f.x * 1.15, f.y));
-          vec2 dir = normalize(f + 1e-5);
-          float amp = smoothstep(0.50, 0.18, d) * 0.14 * sm;
-          // Stable tangent frame: cross(N, up) degenerates to zero where N is
-          // parallel to up (the very top of the back), which spiked the normals
-          // into dark blotches. Fall back to a second axis near the pole.
+          float tipness = smoothstep(0.93, 1.0, along);
+          float dx = lp.x / max(0.001, uLen * 0.10);
+          float dy = lp.y / max(0.001, uLen * 0.10);
+
+          // a horizontal lens: wide in x, thin in y
+          float halfW = 0.42;
+          float halfH = 0.055 + uMouth * 0.30;
+          float open = smoothstep(halfW, halfW * 0.55, abs(dx))
+                     * smoothstep(halfH, halfH * 0.45, abs(dy));
+          open *= tipness;
+
+          // a thin, slightly raised lip line just outside the opening
+          float lip = smoothstep(halfW + 0.22, halfW + 0.04, abs(dx))
+                    * smoothstep(halfH + 0.16, halfH + 0.02, abs(dy))
+                    * (1.0 - open) * tipness;
+          col = mix(col, mix(col, vec3(0.92, 0.52, 0.40), 0.40), lip * 0.7);
+
+          // dark, wet throat, deepest at the centre of the slit
+          float depth = smoothstep(1.0, 0.15, length(vec2(dx / halfW, dy / max(0.02, halfH))));
+          col = mix(col, vec3(0.018, 0.005, 0.004), open * (0.55 + depth * 0.40));
+        }
+
+        // ---- operculum: a subtle plate behind the gill line, with a dark slit
+        // along its trailing edge. Painted on the shared surface, so it cannot
+        // show a seam the way a separate mesh did.
+        {
+          // the gill line sits at a fixed position along the body, on the flank
+          float gillLine = smoothstep(0.755, 0.735, along) * smoothstep(0.700, 0.725, along);
+          float onFlank = smoothstep(0.55, 0.15, abs(lp.y) / max(0.001, uLen * 0.16));
+          // darken toward the trailing edge to read as a slit
+          float slit = smoothstep(0.745, 0.735, along) * smoothstep(0.700, 0.735, along);
+          col *= 1.0 - gillLine * onFlank * 0.10;
+          col = mix(col, vec3(0.16, 0.055, 0.045), slit * onFlank * 0.55);
+        }
+
+        // ---- normal relief from the same field: the domed caps tilt the
+        // surface, and the rim steps down into the scale below it
+        {
+          float e = 0.0035;
+          float r0, l0, r1, l1, r2, l2;
+          scaleField(vLocal + vec3(0.0, e, 0.0), r0, l0);
+          scaleField(vLocal + vec3(0.0, 0.0, e), r1, l1);
+          scaleField(vLocal - vec3(0.0, e, 0.0), r2, l2);
+          float dy = (r0 - r2) * scaleZone;
+          float dz = (r1 - r0) * scaleZone;
+          // 0.55 tilted normals so hard that whole patches went black. Scales
+          // are a shallow relief; the read comes from the tint and the lit lip.
+          float amp = 0.16;
+          // Stable tangent frame near the back pole.
           vec3 hint = abs(N.y) > 0.92 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
           vec3 T = normalize(cross(N, hint) + 1e-4);
           vec3 B = normalize(cross(N, T));
-          N = normalize(N + (T * dir.x + B * dir.y) * amp);
+          N = normalize(N + (T * dy + B * dz) * amp);
         }
 
         // ---- lighting
@@ -583,125 +685,13 @@ export function makeFish(style: FishStyle, shared: Shared): {
     `,
   });
 
-  // ---- mouth: two lips meeting at a slit, not a funnel.
-  // A cone always reads as a beak; goldfish have a thick upper lip and a
-  // slightly receding lower jaw. Each lip is a half-torus arc pressed onto the
-  // snout, and uMouth rotates them apart around the slit.
-  const lipR = style.length * 0.019;      // arc radius
-  const lipThick = style.length * 0.0055; // how fat the lip roll is
-  const lipMat = new THREE.ShaderMaterial({
-    uniforms,
-    vertexShader: /* glsl */ `
-      uniform float uMouth;
-      varying vec3 vN;
-      varying vec3 vW;
-      varying float vSide;
-      void main(){
-        vec3 p = position;
-        // local y > 0 is the upper lip; open by pushing each away from the slit
-        float sign_ = p.y >= 0.0 ? 1.0 : -1.0;
-        p.y += sign_ * uMouth * 0.020;
-        vSide = sign_;
-        vN = normalize(mat3(modelMatrix) * normal);
-        vW = (modelMatrix * vec4(p, 1.0)).xyz;
-        gl_Position = projectionMatrix * viewMatrix * vec4(vW, 1.0);
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      ${NOISE}
-      ${CAUSTIC}
-      uniform vec3 uHueA;
-      uniform vec3 uHueB;
-      uniform float uMouth;
-      varying vec3 vN;
-      varying vec3 vW;
-      varying float vSide;
-      void main(){
-        vec3 N = normalize(vN);
-        vec3 V = normalize(cameraPosition - vW);
-        vec3 L = normalize(uSunDir);
-        float casc = causticSample(vW, uTime);
-        float atten = exp(-max(0.0, 4.05 - vW.y) * 0.10);
-        float ndl = max(0.0, dot(N, L));
-        float fres = pow(1.0 - max(0.0, dot(N, V)), 3.0);
-
-        // fleshy lip: same family as the body, only slightly warmer. Mixing
-        // toward a pale pink made them read as white blobs stuck on the snout.
-        vec3 lipCol = mix(uHueA, uHueB, 0.35) * vec3(1.06, 0.72, 0.62);
-        // the inner edge, facing the slit, is dark and wet
-        float inner = smoothstep(0.25, 0.85, -vSide * N.y);
-        lipCol = mix(lipCol, vec3(0.16, 0.045, 0.035), inner * 0.85);
-
-        vec3 col = lipCol * (uSunColor * (0.14 + 1.1 * casc) * atten * (0.45 + ndl * 0.7)
-                          + vec3(0.030, 0.040, 0.044));
-        // wet rim highlight
-        col += uSunColor * pow(max(0.0, dot(reflect(-L, N), V)), 90.0) * 0.55;
-        col += lipCol * fres * 0.20;
-        gl_FragColor = vec4(col, 1.0);
-      }
-    `,
-  });
+  // ---- mouth is painted on the body shader (see the `mouth` block there).
+  // Separate lip meshes were tried three ways (cone, torus pair, slit quad) and
+  // every one of them read as a ring floating in front of the snout, because the
+  // snout is a curved surface and the pieces were rigid. Painted on the surface,
+  // it cannot detach.
 
   const group = new THREE.Group();
-
-  // Build both lips from one arc: a half torus spanning the top, mirrored for
-  // the bottom. Each is capped at the corners so the slit closes properly.
-  const lipArc = new THREE.TorusGeometry(lipR, lipThick, 10, 26, Math.PI);
-  lipArc.rotateZ(Math.PI / 2);   // arc opens toward -y: an upper lip
-  const lipArcLower = lipArc.clone();
-  lipArcLower.rotateZ(Math.PI);  // mirror to make the lower lip
-
-  const snoutTip = bodySurface(style, 0.995, 0);
-  const snoutN = bodyNormal(style, 0.995, 0);
-
-  for (const [arc, up] of [[lipArc, 1], [lipArcLower, -1]] as const) {
-    const lip = new THREE.Mesh(arc, lipMat);
-    lip.frustumCulled = false;
-    // Press the lip onto the snout: the far side of the arc is pushed back into
-    // the head, so only the forward-facing roll is visible.
-    // Seat the lip so it is mostly embedded in the snout; only the forward
-    // roll shows. Sunk deeper than it protrudes, or it reads as a ring glued on.
-    lip.position.set(0, snoutTip.y * 0.72, snoutTip.z - style.length * 0.016);
-    lip.lookAt(snoutTip.clone().add(snoutN.clone().multiplyScalar(3)));
-    lip.rotateY(Math.PI);          // face out of the snout
-    lip.position.y += up * lipR * 0.42;
-    group.add(lip);
-  }
-
-  // Dark slit between the lips, so the closed mouth still reads as a mouth.
-  const slitGeo = new THREE.CircleGeometry(lipR * 0.72, 20);
-  const slitMat = new THREE.ShaderMaterial({
-    uniforms,
-    vertexShader: /* glsl */ `
-      uniform float uMouth;
-      varying vec2 vUv;
-      varying vec3 vW;
-      void main(){
-        vUv = uv;
-        // stretch vertically as the jaw opens
-        vec3 p = position;
-        p.y *= 0.30 + uMouth * 1.5;
-        vW = (modelMatrix * vec4(p, 1.0)).xyz;
-        gl_Position = projectionMatrix * viewMatrix * vec4(vW, 1.0);
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      uniform float uMouth;
-      varying vec2 vUv;
-      varying vec3 vW;
-      void main(){
-        vec2 c = vUv - 0.5;
-        float edge = smoothstep(0.5, 0.16, length(vec2(c.x, c.y * 1.3)));
-        vec3 col = mix(vec3(0.020, 0.006, 0.005), vec3(0.12, 0.03, 0.02), edge);
-        gl_FragColor = vec4(col, 1.0);
-      }
-    `,
-  });
-  const slit = new THREE.Mesh(slitGeo, slitMat);
-  slit.position.set(0, snoutTip.y * 0.72, snoutTip.z - style.length * 0.020);
-  slit.lookAt(snoutTip.clone().add(snoutN.clone().multiplyScalar(3)));
-  slit.rotateY(Math.PI);
-  group.add(slit);
 
   const body = new THREE.Mesh(buildBodyGeometry(style), bodyMat);
   body.frustumCulled = false;
@@ -746,37 +736,55 @@ export function makeFish(style: FishStyle, shared: Shared): {
   // ---- eyes: seated on the surface normal so only the lens cap protrudes
   const eyeT = 0.855;
   const eyeAngle = Math.PI * 0.13;
-  // small relative to the head: bulbs at the old scale read as googly eyes
-  const eyeR = style.length * 0.021;
-  const eyeGeo = new THREE.SphereGeometry(eyeR, 20, 16);
-  const eyeMat = new THREE.ShaderMaterial({
-    uniforms,
-    vertexShader: /* glsl */ `
-      varying vec3 vN; varying vec3 vW;
-      void main(){
-        vN = normalize(mat3(modelMatrix) * normal);
-        vW = (modelMatrix * vec4(position, 1.0)).xyz;
-        gl_Position = projectionMatrix * viewMatrix * vec4(vW, 1.0);
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      ${ENV}
-      uniform vec3 uSunDir;
-      varying vec3 vN; varying vec3 vW;
-      void main(){
-        vec3 N = normalize(vN);
-        vec3 V = normalize(cameraPosition - vW);
-        vec3 R = reflect(-V, N);
-        // pupil looks along the outward axis of the eye
-        float pupil = smoothstep(0.55, 0.90, dot(N, normalize(vec3(sign(N.x) * 0.98, 0.05, 0.18))));
-        vec3 iris = mix(vec3(0.46, 0.24, 0.04), vec3(0.78, 0.52, 0.12), 1.0 - pupil);
-        vec3 c = mix(iris, vec3(0.010), pupil);
-        c += envColor(R, uSunDir) * 0.45;
-        c += vec3(1.0) * pow(max(0.0, dot(R, uSunDir)), 380.0) * 1.8;
-        gl_FragColor = vec4(c, 1.0);
-      }
-    `,
-  });
+  // Real goldfish eyes are prominent — roughly 6-7% of body length across.
+  // The 0.021 value read as beads, so this is closer to life.
+  const eyeR = style.length * 0.036;
+  const eyeGeo = new THREE.SphereGeometry(eyeR, 24, 18);
+  // Each eye gets its own material so it can carry its outward gaze direction.
+  // The old shader derived the pupil direction from sign(N.x) of the sphere's
+  // own normal, which flips across the ball and left most of it reading as a
+  // flat grey marble.
+  const makeEyeMat = (outward: THREE.Vector3) =>
+    new THREE.ShaderMaterial({
+      uniforms: { ...uniforms, uEyeDir: { value: outward.clone() } },
+      vertexShader: /* glsl */ `
+        varying vec3 vN; varying vec3 vW;
+        void main(){
+          vN = normalize(mat3(modelMatrix) * normal);
+          vW = (modelMatrix * vec4(position, 1.0)).xyz;
+          gl_Position = projectionMatrix * viewMatrix * vec4(vW, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        ${ENV}
+        uniform vec3 uSunDir;
+        uniform vec3 uEyeDir;
+        varying vec3 vN; varying vec3 vW;
+        void main(){
+          vec3 N = normalize(vN);
+          vec3 V = normalize(cameraPosition - vW);
+          vec3 R = reflect(-V, N);
+
+          // how far this point is from the eye's outward axis
+          float facing = dot(N, normalize(uEyeDir));
+          // big amber iris, smaller dark pupil, thin dark limbal ring
+          float iris = smoothstep(0.28, 0.55, facing);
+          float pupil = smoothstep(0.86, 0.95, facing);
+          float ring = smoothstep(0.30, 0.40, facing) * smoothstep(0.52, 0.44, facing);
+
+          vec3 sclera = vec3(0.80, 0.76, 0.68);
+          vec3 irisCol = mix(vec3(0.55, 0.30, 0.05), vec3(0.86, 0.62, 0.16), facing);
+          vec3 c = mix(sclera, irisCol, iris);
+          c = mix(c, vec3(0.006, 0.005, 0.004), pupil);
+          c = mix(c, c * 0.35, ring * 0.85);
+
+          // wet cornea: environment reflection plus a tight key highlight
+          c += envColor(R, uSunDir) * 0.30;
+          c += vec3(1.0, 0.98, 0.92) * pow(max(0.0, dot(R, uSunDir)), 260.0) * 1.6;
+          gl_FragColor = vec4(c, 1.0);
+        }
+      `,
+    });
 
   const eyeNodes: Array<{ mesh: THREE.Mesh; base: THREE.Vector3 }> = [];
   for (const s of [1, -1]) {
@@ -785,15 +793,19 @@ export function makeFish(style: FishStyle, shared: Shared): {
     const surf = bodySurface(style, t, ang);
     const nrm = bodyNormal(style, t, ang);
     // Bury most of the sphere. The head curves away sharply here, so a
-    // nominally half-buried ball still shows more than half — which is what
-    // made the eyes look like beads glued on.
-    const centre = surf.clone().addScaledVector(nrm, -eyeR * 0.80);
-    const eye = new THREE.Mesh(eyeGeo, eyeMat);
+    // nominally half-buried ball still shows more than half.
+    const centre = surf.clone().addScaledVector(nrm, -eyeR * 0.62);
+    const eye = new THREE.Mesh(eyeGeo, makeEyeMat(nrm));
     eye.frustumCulled = false;
     eye.position.copy(centre);
     group.add(eye);
     eyeNodes.push({ mesh: eye, base: centre.clone() });
   }
+
+  // ---- operculum (gill cover) is painted in the body shader, not built as a
+  // separate plate. A lifted mesh always showed a seam and read as a strap
+  // bolted to the flank; painting it on the shared surface blends perfectly and
+  // needs no extra draw call.
 
   // ---- spine bend (mirrors the GLSL so the cloth and eyes agree)
   const curveAt = (z: number) => {

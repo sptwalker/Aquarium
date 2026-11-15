@@ -156,5 +156,7 @@ declare global {
 }
 
 window.__showcase = { setPlaying, isPlaying: () => playing };
+// exposed so the screenshot harness can orbit to a fixed angle
+window.__camera = { camera, controls };
 window.__ready = true;
 frame();
