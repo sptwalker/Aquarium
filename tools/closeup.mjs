@@ -38,7 +38,8 @@ await page.evaluate((d, h) => {
   const probe = window.__probe();
   const f = probe.fish[0];
   controls.target.set(f[0], f[1], f[2]);
-  camera.position.set(f[0] + d * 0.55, f[1] + h * 0.25, f[2] + d);
+  // approach from the front glass so we see the flank, not the tank corner
+  camera.position.set(f[0] * 0.5, f[1] + h * 0.10, Math.min(3.2, d));
   controls.update();
 }, dist, height);
 
