@@ -10,7 +10,8 @@
     "shot": "node tools/shot.mjs",
     "test:interact": "node tools/interact.mjs",
     "test:quality": "node tools/quality.mjs",
-    "test:tail": "node tools/tail.mjs"
+    "test:tail": "node tools/tail.mjs",
+    "test:showcase": "node tools/showcase.mjs"
   },
   "dependencies": {
     "three": "^0.187.0"
