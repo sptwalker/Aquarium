@@ -389,8 +389,8 @@ export class Dust {
           vec4 mv = modelViewMatrix * vec4(p, 1.0);
           gl_Position = projectionMatrix * mv;
           float d = -mv.z;
-          vA = smoothstep(0.4, 2.0, d) * (1.0 - smoothstep(14.0, 26.0, d));
-          gl_PointSize = (0.8 + aSeed * 0.012) * (90.0 / max(1.0, d));
+          vA = smoothstep(0.6, 2.5, d) * (1.0 - smoothstep(12.0, 22.0, d));
+          gl_PointSize = (0.5 + aSeed * 0.008) * (70.0 / max(1.0, d));
         }
       `,
       fragmentShader: /* glsl */ `
@@ -398,8 +398,8 @@ export class Dust {
         void main(){
           vec2 c = gl_PointCoord - 0.5;
           float d = length(c);
-          float a = smoothstep(0.5, 0.05, d) * vA * 0.20;
-          gl_FragColor = vec4(vec3(0.75, 0.86, 0.82) * 0.9, a);
+          float a = smoothstep(0.5, 0.05, d) * vA * 0.055;
+          gl_FragColor = vec4(vec3(0.75, 0.86, 0.82) * 0.8, a);
         }
       `,
     });

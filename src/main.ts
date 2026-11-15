@@ -80,7 +80,7 @@ for (const [species, hunger] of FISH_SETUP) {
   const s = 0.92 + Math.random() * 0.16;
   built.group.scale.setScalar(s);
   scene.add(built.group);
-  school.add(species, hunger);
+  school.add(species, hunger, style.length * s);
   fishViews.push({ group: built.group, uniforms: built.uniforms, updateTail: built.updateTail });
 }
 
@@ -162,6 +162,7 @@ declare global {
     __stats?: unknown;
     __quality?: () => Record<string, unknown> & { name: string };
     __tail?: () => { min: number[]; max: number[]; tip: number[] } | null;
+    __camera?: { camera: THREE.PerspectiveCamera; controls: { target: THREE.Vector3; update: () => void } };
     __probe?: () => {
       foodLive: number;
       hungerSum: number;
@@ -375,6 +376,7 @@ function frame() {
 
 window.__ready = true;
 window.__quality = () => ({ ...QUALITY[quality], name: quality });
+window.__camera = { camera, controls };
 window.__tail = () => {
   const v = fishViews[0];
   const g = (v.group.children.find((c) => c instanceof THREE.Mesh && (c.geometry as THREE.BufferGeometry).attributes.uv?.count === 26 * 16) as THREE.Mesh | undefined);

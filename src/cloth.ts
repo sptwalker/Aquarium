@@ -11,12 +11,16 @@ import * as THREE from 'three';
  */
 
 type ClothOpts = {
-  /** distance from root to tip in local units, used to scale flutter */
+  /** distance from root to tip in local units */
   span: number;
+  /** fin's own soft flutter, on top of the body wave */
   flutterFreq: number;
   flutterPhase: number;
   flutterAmp: number;
 };
+
+/** Maps a rest point into the bent spine frame. */
+export type BendFn = (x: number, z: number) => [number, number];
 
 export class FinCloth {
   readonly geometry: THREE.BufferGeometry;
@@ -109,27 +113,27 @@ export class FinCloth {
   }
 
   /**
-   * @param rootOffset maps a local z to the body's lateral swim offset
-   * @param flow       water velocity in fin-local space (i.e. -fish velocity)
-   */
-  /**
-   * Spring-target cloth: each vertex is pulled toward a moving rest pose that
-   * already carries the swim wave, the water's lag and the fin's own flutter.
-   * Integrating that as a spring (rather than free Verlet) is what keeps a
-   * thin membrane stable at real frame rates while still showing inertia.
+   * Spring-target cloth. Each vertex is pulled toward a moving target derived
+   * from the fish's bent spine frame, plus water lag and the fin's own flutter.
+   * Integrating that as a damped spring (rather than free Verlet) keeps a thin
+   * membrane stable at real frame rates while still showing inertia.
    *
-   * @param rootOffset maps a local z to the body's lateral swim offset
-   * @param flow       water velocity in fin-local space (i.e. -fish velocity)
+   * Because the target comes from the spine frame, the fin's far edge travels
+   * further than its root: the membrane visibly ripples instead of translating
+   * as one rigid plate.
+   *
+   * @param bend maps a rest (x, z) into the bent body frame
+   * @param flow water velocity in fin-local space (i.e. -fish velocity)
    */
-  update(dt: number, time: number, rootOffset: (z: number) => number, flow: THREE.Vector3) {
+  update(dt: number, time: number, bend: BendFn, flow: THREE.Vector3) {
     const { pos, prev, rest, pinned, n } = this;
-    const damp = Math.exp(-dt * 5.0);
-    const stiff = Math.min(1, 9.0 * dt);
+    const damp = Math.exp(-dt * 6.5);
+    const stiff = Math.min(1, 10.0 * dt);
 
     // water pressing on the membrane: the tail trails behind the fish
-    const lagX = THREE.MathUtils.clamp(flow.x * 0.22, -0.35, 0.35);
-    const lagY = THREE.MathUtils.clamp(flow.y * 0.12, -0.20, 0.20);
-    const lagZ = THREE.MathUtils.clamp(flow.z * 0.10, -0.16, 0.16);
+    const lagX = THREE.MathUtils.clamp(flow.x * 0.26, -0.40, 0.40);
+    const lagY = THREE.MathUtils.clamp(flow.y * 0.10, -0.16, 0.16);
+    const lagZ = THREE.MathUtils.clamp(flow.z * 0.16, -0.24, 0.24);
 
     const fAmp = this.opts.flutterAmp;
     const fOmega = this.opts.flutterFreq;
@@ -139,23 +143,23 @@ export class FinCloth {
       const o = i * 3;
       const r = this.reach[i];
 
+      const [bx, bz] = bend(rest[o], rest[o + 2]);
+
       if (pinned[i]) {
-        const px = rest[o] + rootOffset(rest[o + 2]);
-        pos[o] = px;
+        pos[o] = bx;
         pos[o + 1] = rest[o + 1];
-        pos[o + 2] = rest[o + 2];
-        prev[o] = px;
+        pos[o + 2] = bz;
+        prev[o] = bx;
         prev[o + 1] = pos[o + 1];
-        prev[o + 2] = pos[o + 2];
+        prev[o + 2] = bz;
         continue;
       }
 
-      // travelling wave down the fin, so the membrane ripples instead of
-      // moving as one rigid sheet
-      const wave = Math.sin(time * fOmega + fPhase - r * 4.2);
-      const tx = rest[o] + rootOffset(rest[o + 2]) + lagX * r + wave * fAmp * r;
+      // soft ripple running from root to tip, on top of the spine wave
+      const wave = Math.sin(time * fOmega + fPhase - r * 5.6) * fAmp * r * r;
+      const tx = bx + lagX * r + wave;
       const ty = rest[o + 1] + lagY * r;
-      const tz = rest[o + 2] + lagZ * r;
+      const tz = bz + lagZ * r;
 
       const vx = (pos[o] - prev[o]) * damp;
       const vy = (pos[o + 1] - prev[o + 1]) * damp;

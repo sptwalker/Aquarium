@@ -25,7 +25,7 @@ export class Input {
   private plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -WATER_Y);
   private hit = new THREE.Vector3();
   private last = new THREE.Vector2();
-  private lastT = 0;
+  private lastMoveT = 0;
   private el: HTMLElement;
   private camera: THREE.PerspectiveCamera;
 
@@ -42,6 +42,20 @@ export class Input {
     this.state.ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     this.state.pointerInside = true;
     this.lastActivity = performance.now() / 1000;
+
+    // Pixel speed, not NDC-per-frame: dividing NDC by frame time made any
+    // ordinary mouse move look like a whip and kept the fish permanently spooked.
+    const now = performance.now() / 1000;
+    const p = new THREE.Vector2(e.clientX, e.clientY);
+    if (this.lastMoveT > 0) {
+      const px = p.distanceTo(this.last);
+      const dtm = Math.max(0.008, now - this.lastMoveT);
+      const instant = px / dtm;              // px per second
+      // smooth so a single jittery sample doesn't trigger a scare
+      this.state.mouseSpeed += (instant - this.state.mouseSpeed) * 0.35;
+    }
+    this.last.copy(p);
+    this.lastMoveT = now;
   };
 
   private onDown = () => {
@@ -53,7 +67,7 @@ export class Input {
     this.state.pointerInside = false;
   };
 
-  update(t: number) {
+  update(_t: number) {
     this.ray.setFromCamera(this.state.ndc, this.camera);
     // Aim at the water surface if the ray hits it, otherwise at the back glass.
     const ok = this.ray.ray.intersectPlane(this.plane, this.hit);
@@ -69,12 +83,13 @@ export class Input {
       this.state.mouse3.x = THREE.MathUtils.clamp(p.x, -TANK.hw + 0.4, TANK.hw - 0.4);
       this.state.mouse3.z = THREE.MathUtils.clamp(p.z, -TANK.hd + 0.4, TANK.hd - 0.4);
     }
-    const dt = Math.max(1e-3, t - this.lastT);
-    const moved = this.last.distanceTo(this.state.ndc);
-    this.state.mouseSpeed = moved / dt;
-    this.last.copy(this.state.ndc);
-    this.lastT = t;
-    if (!this.state.pointerInside) this.state.mouseSpeed = 0;
+    // decay when the pointer rests; no per-frame divide of stale samples
+    if (!this.state.pointerInside) {
+      this.state.mouseSpeed = 0;
+    } else {
+      this.state.mouseSpeed *= 0.92;
+      if (this.state.mouseSpeed < 1) this.state.mouseSpeed = 0;
+    }
   }
 
   consumeClick(): boolean {

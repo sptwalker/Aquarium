@@ -69,7 +69,6 @@ export function makeGlassScene(sh: Shared): {
         vec2 slope = normalize(Nf.xz + vec2(1e-5)) * length(Nf.xz);
         float thick = 0.010 + 0.012 * step(0.5, abs(Nf.x)) + 0.012 * step(0.5, abs(Nf.z));
         vec2 off = slope * thick * smoothstep(0.0, 0.5, abs(facing) < 0.95 ? 0.4 : 0.1);
-        off += vec2(smudge(uv * 9.0), smudge(uv * 9.0 + 7.3)) * 0.0006;
 
         vec3 behind = vec3(
           texture2D(uScene, uv + off).r,

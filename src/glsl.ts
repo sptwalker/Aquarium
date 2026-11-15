@@ -30,23 +30,43 @@ uniform float uSwimAmp;
 uniform float uSwimFreq;
 uniform float uLen;
 
-float swimOffset(float z){
-  float t = clamp(z / uLen + 0.5, 0.0, 1.0);      // 0 at tail .. 1 at nose
-  float a = smoothstep(0.0, 0.55, 1.0 - t);        // grows toward tail
-  float w = sin((1.0 - t) * 5.4 - uSwimPhase);     // phase is integrated on the CPU
-  return a * a * uSwimAmp * w;
+// Lateral curvature of the spine at the given z (body space).
+// Two harmonics: the fundamental travelling wave plus a slower head sway.
+// tailness deliberately runs past 1 behind the peduncle so the caudal fin
+// continues the same wave instead of moving as one rigid plate.
+float swimTailness(float z){
+  return 1.0 - (z / uLen + 0.5);
 }
+float swimCurve(float z){
+  float tn = max(0.0, swimTailness(z));
+  // saturating envelope: grows to 1 at the peduncle and holds, so the wave
+  // keeps travelling through the fin without the amplitude blowing up
+  float a = 1.0 - exp(-tn * tn * 1.9);
+  float w1 = sin(tn * 5.1 - uSwimPhase);
+  float w2 = sin(tn * 2.3 - uSwimPhase * 0.5 + 1.7) * 0.30;
+  return (w1 + w2) * a * uSwimAmp;
+}
+
+// Exact bending: build a tangent frame along the spine and place the
+// cross-section in it. A pure lateral offset would shear the body (sections
+// stay parallel) and read as stiff; rotating them makes it bend like flesh.
 vec3 swimBend(vec3 p){
-  vec3 q = p;
-  q.x += swimOffset(p.z);
-  return q;
+  float x = swimCurve(p.z);
+  float e = 0.015;
+  float dx = (swimCurve(p.z + e) - swimCurve(p.z - e)) / (2.0 * e);
+  float inv = inversesqrt(1.0 + dx * dx);
+  float c = inv;
+  float s = dx * inv;
+  // N = (c, -s) is the rotated lateral axis of the cross-section
+  return vec3(x + p.x * c, p.y, p.z - p.x * s);
 }
 vec3 swimBendNormal(vec3 p, vec3 n){
-  float e = 0.02;
-  float d = (swimOffset(p.z + e) - swimOffset(p.z - e)) / (2.0 * e);
-  float c = inversesqrt(1.0 + d * d);
-  float s = d * c;
-  return vec3(n.x * c - n.z * s, n.y, n.z * c + n.x * s);
+  float e = 0.015;
+  float dx = (swimCurve(p.z + e) - swimCurve(p.z - e)) / (2.0 * e);
+  float inv = inversesqrt(1.0 + dx * dx);
+  float c = inv;
+  float s = dx * inv;
+  return vec3(n.x * c + n.z * s, n.y, -n.x * s + n.z * c);
 }
 `;
 

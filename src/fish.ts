@@ -17,7 +17,7 @@ type FishStyle = {
 
 const STYLES: Record<FishSpecies, FishStyle> = {
   fantail: {
-    length: 1.62, girth: 0.35,
+    length: 1.12, girth: 0.33,
     hueA: new THREE.Vector3(1.0, 0.26, 0.020),
     hueB: new THREE.Vector3(0.92, 0.10, 0.014),
     belly: new THREE.Vector3(1.0, 0.92, 0.82),
@@ -25,7 +25,7 @@ const STYLES: Record<FishSpecies, FishStyle> = {
     wen: 0.0,
   },
   oranda: {
-    length: 1.48, girth: 0.40,
+    length: 1.02, girth: 0.37,
     hueA: new THREE.Vector3(0.98, 0.21, 0.018),
     hueB: new THREE.Vector3(0.86, 0.07, 0.012),
     belly: new THREE.Vector3(1.0, 0.90, 0.78),
@@ -33,7 +33,7 @@ const STYLES: Record<FishSpecies, FishStyle> = {
     wen: 1.0,
   },
   ryukin: {
-    length: 1.40, girth: 0.42,
+    length: 0.96, girth: 0.38,
     hueA: new THREE.Vector3(0.97, 0.40, 0.045),
     hueB: new THREE.Vector3(0.88, 0.44, 0.30),
     belly: new THREE.Vector3(1.0, 0.95, 0.88),
@@ -41,7 +41,8 @@ const STYLES: Record<FishSpecies, FishStyle> = {
     wen: 0.0,
   },
   comet: {
-    length: 1.95, girth: 0.25,
+    // roughly 4.5:1 — a slim fish, not a leaf; the old 7.8:1 read as paper
+    length: 1.42, girth: 0.31,
     hueA: new THREE.Vector3(1.0, 0.30, 0.020),
     hueB: new THREE.Vector3(0.97, 0.52, 0.030),
     belly: new THREE.Vector3(1.0, 0.95, 0.87),
@@ -61,7 +62,7 @@ function bodyProfile(z: number): number {
     return Math.sqrt(Math.max(0, 1 - k * k)) * 0.52 + 0.10;
   }
   if (t > 0.16) {
-    // widest just behind the gill cover (t≈0.62), gently narrowing forward
+    // widest just behind the gill cover, gently narrowing forward
     const k = (t - 0.16) / 0.70;
     const peak = Math.sin(Math.pow(k, 0.75) * Math.PI * 0.92);
     return 0.44 + 0.58 * peak;
@@ -69,6 +70,22 @@ function bodyProfile(z: number): number {
   // caudal peduncle: thin, then a small flare where the tail root begins
   const k = t / 0.16;
   return 0.10 + 0.34 * k * k;
+}
+
+/**
+ * Half-width of the body surface at a given axial position and height.
+ * Mirrors the cross-section maths in buildBodyGeometry, so fins and eyes can
+ * be planted exactly on the skin instead of at guessed offsets.
+ */
+function surfaceHalfWidth(style: FishStyle, z: number, y: number): number {
+  const u = z / style.length + 0.5;
+  const t = u * 2 - 1;
+  const prof = bodyProfile(u - 0.5) * style.girth;
+  const headK = THREE.MathUtils.smoothstep(t, 0.62, 1.0);
+  const halfY = prof * 0.86 * (1.0 - headK * 0.30);
+  const rx = prof * 0.70 * (1.0 - headK * 0.28);
+  const k = THREE.MathUtils.clamp(Math.abs(y) / Math.max(1e-4, halfY), 0, 0.999);
+  return rx * Math.sqrt(1 - k * k);
 }
 
 function buildBodyGeometry(style: FishStyle, segs = 46, radial = 22): THREE.BufferGeometry {
@@ -86,9 +103,11 @@ function buildBodyGeometry(style: FishStyle, segs = 46, radial = 22): THREE.Buff
     for (let j = 0; j < cols; j++) {
       const a = (j / radial) * Math.PI * 2;
       const ca = Math.cos(a), sa = Math.sin(a);
-      // cross-section: laterally compressed (tall, narrow), deeper belly
-      let x = ca * prof * 0.58;
-      let y = sa * prof * 1.02;
+      // cross-section: moderately compressed, taller than wide.
+      // Body depth lands near 0.5 of length, which is what goldfish look like;
+      // anything deeper reads as a disc.
+      let x = ca * prof * 0.70;
+      let y = sa * prof * 0.86;
       // dorsal ridge + belly curve
       y += Math.max(0, sa) * prof * 0.14;
       y -= Math.max(0, -sa) * prof * 0.18;
@@ -125,8 +144,8 @@ function makeTailCloth(style: FishStyle): FinCloth {
   const L = style.length;
   const cols = 26;
   const rows = 16;
-  // comets carry a long flowing tail; fancy varieties a shorter fan
-  const span = L * (style.girth < 0.3 ? 0.62 : 0.44);
+  // comets carry a longer flowing tail; fancy varieties a shorter, fuller fan
+  const span = L * (style.girth < 0.3 ? 0.58 : 0.40);
   const rootZ = -L * 0.46;
   const rest = new Float32Array(cols * rows * 3);
 
@@ -137,8 +156,10 @@ function makeTailCloth(style: FishStyle): FinCloth {
       const d = j / (rows - 1);
       const notch = 1.0 - 0.40 * Math.exp(-s * s * 7.0);
       const z = rootZ - d * span * notch;
-      const y = s * Math.pow(d, 0.82) * L * 0.30 * (1 + 0.10 * Math.sin(Math.abs(s) * 2.6));
-      const x = s * d * L * 0.09 + d * d * Math.cos(s * 1.9) * L * 0.05;
+      // vertical spread stays under the body depth so it reads as a fan rather
+      // than a kite, but big enough to be the fish's dominant silhouette
+      const y = s * Math.pow(d, 0.82) * L * 0.245 * (1 + 0.10 * Math.sin(Math.abs(s) * 2.6));
+      const x = s * d * L * 0.075 + d * d * Math.cos(s * 1.9) * L * 0.045;
       const o = (i * rows + j) * 3;
       rest[o] = x;
       rest[o + 1] = y + style.girth * 0.02;
@@ -169,21 +190,29 @@ function makeFinGeometry(
     const veined = 1 + 0.012 * Math.sin(s * 26.0);
     switch (kind) {
       case 'dorsal': {
-        // soft sail along the back: smooth leading edge, notched trailing edge
-        const z = -L * 0.06 - u * L * 0.36;
+        // soft sail along the back, kept low so it hugs the body
+        const z = -L * 0.06 - u * L * 0.34;
         const arc = Math.max(0, Math.sin(Math.min(1, (u - 0.04) / 0.96) * Math.PI));
-        const h = (L * 0.22) * Math.pow(arc, 0.75) * veined;
-        return new THREE.Vector3(s * 0.012, style.girth * 0.74 + d * h, z + Math.sin(s * 3) * 0.02);
+        const h = (L * 0.13) * Math.pow(arc, 0.75) * veined;
+        return new THREE.Vector3(s * 0.012, style.girth * 0.80 + d * h, z + Math.sin(s * 3) * 0.02);
       }
       case 'anal': {
         const z = -L * 0.30;
-        const h = L * 0.20 * veined;
-        return new THREE.Vector3(s * 0.02, -style.girth * 0.72 - d * h, z - u * L * 0.10 - d * 0.05);
+        const h = L * 0.11 * veined;
+        return new THREE.Vector3(s * 0.02, -style.girth * 0.78 - d * h, z - u * L * 0.10 - d * 0.05);
       }
       case 'pectoral': {
-        const z = L * 0.10;
-        const len = L * 0.34 * veined;
-        return new THREE.Vector3(d * len * (0.25 + Math.abs(s) * 0.8), style.girth * 0.05 + s * d * len * 0.62, z - d * len * 0.5);
+        // small paddle rooted exactly on the flank, swept back along the body
+        const z0 = L * 0.14;
+        const len = L * 0.13 * veined;
+        const y0 = style.girth * 0.02;
+        const rootX = surfaceHalfWidth(style, z0, y0) * 0.92;
+        const width = d * len * (0.36 + 0.26 * Math.abs(s));
+        return new THREE.Vector3(
+          rootX + d * len * 0.75,
+          y0 + s * width * 0.70,
+          z0 - d * len * 0.9,
+        );
       }
     }
   };
@@ -258,18 +287,26 @@ export function makeFish(style: FishStyle, shared: Shared): {
     vertexShader: /* glsl */ `
       ${NOISE}
       ${SWIM}
+      uniform float uMouth;
       varying vec3 vWorld;
       varying vec3 vNormal;
       varying vec3 vLocalNormal;
       varying vec3 vLocal;
       varying vec2 vUv;
       void main(){
-        vec3 p = swimBend(position);
-        vec3 n = swimBendNormal(position, normal);
-        vLocal = position;
+        vec3 p = position;
+        // mouth: split the snout locally so it actually opens to gape
+        float snout = smoothstep(0.90, 0.995, uv.y);
+        float jaw = smoothstep(0.05, -0.05, p.y);
+        p.y += jaw * snout * uMouth * uLen * 0.085;
+        p.z -= snout * uMouth * 0.03;
+
+        vec3 q = swimBend(p);
+        vec3 n = swimBendNormal(p, normal);
+        vLocal = p;
         vLocalNormal = normal;
         vUv = uv;
-        vWorld = (modelMatrix * vec4(p, 1.0)).xyz;
+        vWorld = (modelMatrix * vec4(q, 1.0)).xyz;
         vNormal = normalize(mat3(modelMatrix) * n);
         gl_Position = projectionMatrix * viewMatrix * vec4(vWorld, 1.0);
       }
@@ -488,15 +525,20 @@ export function makeFish(style: FishStyle, shared: Shared): {
   }
 
   // root motion source: the body's own wave, so the tail lags behind the fish
-  const swimOffsetAt = (z: number) => {
-    const t = Math.min(1, Math.max(0, z / uniforms.uLen.value + 0.5));
-    const a = THREE.MathUtils.smoothstep(1 - t, 0, 0.55);
-    return a * a * uniforms.uSwimAmp.value * Math.sin((1 - t) * 5.4 - uniforms.uSwimPhase.value);
+  // mirror of the GLSL swimCurve/swimBend so the cloth and the shader agree
+  const curveAt = (z: number) => {
+    const tn = Math.max(0, 1 - (z / uniforms.uLen.value + 0.5));
+    const a = 1 - Math.exp(-tn * tn * 1.9);
+    const w1 = Math.sin(tn * 5.1 - uniforms.uSwimPhase.value);
+    const w2 = Math.sin(tn * 2.3 - uniforms.uSwimPhase.value * 0.5 + 1.7) * 0.30;
+    return (w1 + w2) * a * uniforms.uSwimAmp.value;
   };
-  const updateTail = (dt: number, time: number, flow: THREE.Vector3) => {
-    tail.update(dt, time, swimOffsetAt, flow);
+  const bend = (x: number, z: number): [number, number] => {
+    const e = 0.015;
+    const dx = (curveAt(z + e) - curveAt(z - e)) / (2 * e);
+    const inv = 1 / Math.sqrt(1 + dx * dx);
+    return [curveAt(z) + x * inv, z - x * dx * inv];
   };
-
   // eyes: glossy amber-irised spheres with a pupil
   const eyeGeo = new THREE.SphereGeometry(style.girth * 0.105, 18, 12);
   const pupilGeo = new THREE.SphereGeometry(style.girth * 0.115, 16, 12);
@@ -522,12 +564,34 @@ export function makeFish(style: FishStyle, shared: Shared): {
       }
     `,
   });
-  for (const s of [1, -1]) {
+  // eyes ride the same spine frame as the body, otherwise the bending head
+  // sweeps through them and they appear to poke out of the skin
+  const eyeBase = [1, -1].map((s) => {
     const eye = new THREE.Mesh(eyeGeo, eyeMat);
-    eye.position.set(s * style.girth * 0.44, style.girth * 0.30, style.length * 0.33);
     eye.scale.set(0.55, 1.0, 1.0);
+    eye.frustumCulled = false;
     group.add(eye);
-  }
+    return {
+      mesh: eye,
+      // sit the lens on the actual skin, found from the body cross-section,
+      // and let it bulge slightly outward like a real eye
+      x: s * (surfaceHalfWidth(style, style.length * 0.33, style.girth * 0.26) + style.girth * 0.015),
+      y: style.girth * 0.26,
+      z: style.length * 0.33,
+    };
+  });
+  const placeEyes = () => {
+    for (const e of eyeBase) {
+      const [bx, bz] = bend(e.x, e.z);
+      e.mesh.position.set(bx, e.y, bz);
+    }
+  };
+  placeEyes();
+
+  const updateTail = (dt: number, time: number, flow: THREE.Vector3) => {
+    tail.update(dt, time, bend, flow);
+    placeEyes();
+  };
 
   return { group, uniforms, body, tail, updateTail };
 }

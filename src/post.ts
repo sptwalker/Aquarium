@@ -192,8 +192,9 @@ void main(){
 
   col *= 1.0 - smoothstep(0.10, 0.62, r2) * 0.55;
 
+  // a touch of grain only: heavy noise reads as dirt on the glass
   float g = hash(uv * uRes + fract(uTime) * 91.7);
-  col += (g - 0.5) * 0.016;
+  col += (g - 0.5) * 0.004;
 
   gl_FragColor = vec4(pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2)), 1.0);
 }

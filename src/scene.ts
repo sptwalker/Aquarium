@@ -80,12 +80,12 @@ export function makeSand(sh: Shared): THREE.Group {
       varying float vDepth;
       void main(){
         vec2 p = vWorld.xz;
-        float grain = fbm3(p * 34.0);
-        float grain2 = noise2(p * 128.0);
+        float grain = fbm3(p * 9.0);
         vec3 sandA = vec3(0.30, 0.26, 0.19);
         vec3 sandB = vec3(0.44, 0.39, 0.30);
         vec3 sand = mix(sandA, sandB, smoothstep(0.25, 0.85, grain));
-        sand *= 0.86 + grain2 * 0.28;
+        // fine speckle at this frequency just aliases into visible dirt
+        sand *= 0.94 + grain * 0.12;
 
         // scattered pebbles
         vec2 cell = floor(p * 9.0);
