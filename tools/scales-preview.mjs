@@ -8,6 +8,7 @@ const MODE = process.argv[2] ?? 'prio';
 const SIGN = Number(process.argv[3] ?? 1);
 const RXX = Number(process.argv[4] ?? 0.62);
 const RYY = Number(process.argv[5] ?? 0.80);
+const FAN = Number(process.argv[6] ?? 0.55);
 
 /**
  * Winner-takes-all shingle lattice.
@@ -39,8 +40,11 @@ function heightAt(u, v) {
     const prio = SIGN * (dy + dx * 0.02);
     if (prio <= bestPrio) continue;
 
-    // Round scale, slightly taller than wide so rows interlock like a lattice.
-    const nx = ddx / RXX;
+    // Fan flares toward -v (toward the tail on the fish): narrow where the
+    // scale is buried under the row above, wide at its exposed free rim.
+    const along = Math.min(1, Math.max(0, (RYY - ddy) / (2 * RYY)));  // 1 at the free rim
+    const width = RXX * (1.0 - FAN + FAN * along * along);
+    const nx = ddx / width;
     const ny = ddy / RYY;
     const r2 = nx * nx + ny * ny;
     if (r2 >= 1) continue;

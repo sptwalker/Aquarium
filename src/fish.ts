@@ -85,15 +85,20 @@ const PROFILE_KOI: Profile = [
   [0.368, 0.970],
   [0.475, 1.000],   // deepest, just forward of mid-body
   [0.613, 0.996],
-  [0.690, 0.883],
-  [0.752, 0.761],
-  [0.799, 0.609],
-  [0.848, 0.422],
-  [0.900, 0.304],
-  [0.940, 0.165],
-  [0.969, 0.065],
-  [0.986, 0.024],
-  [1.000, 0.008],   // snout converges to a point
+  // ---- head. The radius has to keep shrinking through the whole head, with
+  // the slope steepening monotonically. Any station that sits at nearly the
+  // same radius as its neighbour flatlines the outline and the head reads as a
+  // tube with a cap on it, which is exactly what was being reported.
+  [0.650, 0.955],
+  [0.700, 0.905],
+  [0.750, 0.840],
+  [0.800, 0.755],
+  [0.850, 0.648],
+  [0.900, 0.500],
+  [0.940, 0.340],
+  [0.968, 0.200],
+  [0.988, 0.095],
+  [1.000, 0.018],   // snout converges to a point
 ];
 
 const STYLES: Record<FishSpecies, FishStyle> = {
@@ -180,15 +185,15 @@ function bodySurface(style: FishStyle, t: number, angle: number): THREE.Vector3 
   // The snout is a dome, not a disc.
   //
   // Closing the body with a flat cap at t = 1 puts a circle facing the camera,
-  // which is why the front of the head was never anything but a flat face. Here
-  // the last stretch bends into a hemisphere so the surface curves forward and
-  // closes to a point.
+  // which is why the front of the head was never anything but a flat face.
   //
-  // The two shapes are BLENDED over a window rather than switched at a
-  // threshold: a hard switch leaves the radius continuous but its slope not,
-  // and that C1 break showed up as a crease ringed around the head.
-  const T_DOME = 0.955;
-  const BLEND = 0.040;
+  // The blend window is now confined to the last few percent: the profile
+  // itself already tapers to a point, so the dome is only a round-over on the
+  // final sliver. The old window started at 0.955 and clamped the cap radius at
+  // 22% of the local radius, which left a blunt cork on the end of a taper —
+  // exactly the "cylinder with a cap" the head kept reading as.
+  const T_DOME = 0.982;
+  const BLEND = 0.018;
   const domeW = THREE.MathUtils.smoothstep(t, T_DOME, T_DOME + BLEND);
   const prof = smoothProfile(style.profile, t);
 
@@ -198,14 +203,10 @@ function bodySurface(style: FishStyle, t: number, angle: number): THREE.Vector3 
   if (domeW > 0) {
     const k = Math.min(1, Math.max(0, (t - T_DOME) / (1 - T_DOME)));
     const r0 = smoothProfile(style.profile, T_DOME);
-    // Only the very tip is rounded. The snout itself is a TAPER (see the
-    // profile keys): a wide rounded cap made a bulbous nose with no direction,
-    // and an almost-pointed tip left nowhere for the mouth to sit. A short
-    // taper plus a small round-over reads as a muzzle.
-    const tipR = 0.22;
-    const domeR = r0 * Math.max(tipR, Math.pow(Math.max(0, 1 - Math.pow(k, 2.2)), 1 / 2.2));
+    const tipR = 0.10;
+    const domeR = r0 * Math.max(tipR, Math.pow(Math.max(0, 1 - Math.pow(k, 2.4)), 1 / 2.4));
     const zTube = (t - 0.5) * L;
-    const zDome = (T_DOME - 0.5) * L + r0 * L * 0.10 * k;
+    const zDome = (T_DOME - 0.5) * L + r0 * L * 0.055 * k;
     r = THREE.MathUtils.lerp(prof, domeR, domeW);
     z = THREE.MathUtils.lerp(zTube, zDome, domeW);
   }
@@ -228,9 +229,65 @@ function bodySurface(style: FishStyle, t: number, angle: number): THREE.Vector3 
   const snout = Math.exp(-Math.pow((t - 0.93) / 0.045, 2));
   cy -= snout * L * (style.barbels > 0 ? 0.008 : 0.014);
 
+  // The muzzle is a WEDGE, not a cone.
+  //
+  // A circular cross-section tapering to a point gives a beak, and any mouth
+  // painted on it wraps around a curved surface, which is why it never read as
+  // a split. Squashing y over the last stretch turns the snout into a
+  // horizontally flattened blade: now there is a genuine upper lip and lower
+  // jaw with a flat front between them, and the cleft has something to sit in.
+  // The squash is gated on the muzzle so the body sections stay round.
+  const wedge = THREE.MathUtils.smoothstep(t, 0.87, 0.995) * 0.62;
+  const squashY = 1 - wedge;
+
+  // ---- mouth cleft, cut into the surface.
+  //
+  // Painting a mouth only ever produced a dark patch on a convex muzzle. What
+  // makes a mouth read is the silhouette: the tip must actually fork into an
+  // upper lip and a lower jaw. This carves a horizontal notch at the midline of
+  // the last 8% of the body, pushing the skin back in z and flaring the two
+  // lips apart in y. Gated on t so nothing behind the snout is touched.
+  const cleftT = THREE.MathUtils.smoothstep(t, 0.925, 0.995);
+  const dyN = Math.sin(angle);                     // -1 belly .. +1 back
+  const band = 1 - THREE.MathUtils.smoothstep(Math.abs(dyN), 0.10, 0.46);
+  const notch = cleftT * band;
+  if (notch > 0) {
+    // pull the skin back to form the slot
+    z -= notch * L * 0.020;
+    // and part the lips: up above the slot, down below it
+    const lip = Math.sign(dyN) * notch * L * 0.016;
+    cy += lip;
+  }
+
+  // ---- operculum (gill cover), as GEOMETRY.
+  //
+  // Painting a plate and a slit onto the skin only ever produced a shading
+  // gradient: from any angle the flank stayed smooth, so the gills simply were
+  // not there. A real plate needs a real silhouette, and the cheapest way to
+  // get one without floating a separate mesh over a curved surface is to
+  // displace the shared surface — then `bodyNormal` derives the right normals
+  // and the edge catches light exactly like a physical lip of skin.
+  //
+  // Two features: a broad outward swell over the cover plate, and a narrow
+  // inward groove at its rear edge (the gill opening). Both are gated on the
+  // flank so they vanish at the dorsal ridge and the belly.
+  const flankW = Math.pow(Math.abs(Math.cos(angle)), 1.6);
+  if (flankW > 0.02) {
+    const plate = THREE.MathUtils.smoothstep(t, 0.748, 0.782)
+                * (1 - THREE.MathUtils.smoothstep(t, 0.800, 0.845));
+    const groove = Math.exp(-Math.pow((t - 0.742) / 0.0095, 2));
+    const out = (plate * 0.011 - groove * 0.030) * L * flankW;
+    const ca = Math.cos(angle), sa = Math.sin(angle);
+    return new THREE.Vector3(
+      ca * r * style.width * L + ca * out,
+      cy + sa * r * style.depth * L * squashY + sa * out,
+      z,
+    );
+  }
+
   return new THREE.Vector3(
     Math.cos(angle) * r * style.width * L,
-    cy + Math.sin(angle) * r * style.depth * L,
+    cy + Math.sin(angle) * r * style.depth * L * squashY,
     z,
   );
 }

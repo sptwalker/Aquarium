@@ -30,6 +30,8 @@ const ROWS = 12;  // scale rows per tile
 /** Half-width / half-height of one scale, in lattice cells. */
 const RX = 0.95;
 const RY = 0.72;
+/** How much a scale narrows toward its buried end (0 = ellipse). */
+const FAN = 0.55;
 
 /**
  * Height of the shingle at tile uv, in [0,1].
@@ -74,7 +76,14 @@ function heightAt(u: number, v: number): number {
       if (ddx > COLS * 0.5) ddx -= COLS;
       if (ddx < -COLS * 0.5) ddx += COLS;
 
-      const nx = ddx / RX;
+      // Fan flares toward -v, i.e. toward the tail once this is laid on the
+      // body (uv.y grows toward the snout). The scale is narrow where the row
+      // above buries it and wide at the free rim that overhangs the row behind.
+      // Getting this backwards made every scale point at the head, which reads
+      // as reversed overlapping.
+      const along = Math.min(1, Math.max(0, (RY - ddy) / (2 * RY)));
+      const width = RX * (1.0 - FAN + FAN * along * along);
+      const nx = ddx / width;
       const ny = ddy / RY;
       const r2 = nx * nx + ny * ny;
       if (r2 >= 1) continue;
