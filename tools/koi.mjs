@@ -34,6 +34,9 @@ const views = [
   ['kyo-head', 30, 1.15, 0.06],
   ['kyo-front', 0, 1.15, 0.06],
   ['kyo-below', 110, 2.0, -1.45],
+  ['kyo-flank', 62, 0.85, 0.30],
+  ['kyo-nose', 22, 0.55, 0.02],
+  ['kyo-lips', 8, 0.36, 0.0],
 ];
 for (const [name, deg, r, y] of views) {
   await page.evaluate((d, rr, yy) => {

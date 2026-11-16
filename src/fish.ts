@@ -65,26 +65,35 @@ const PROFILE_GOLDFISH: Profile = [
  * continuous sweep to a narrow snout. Any bulge in that sweep reads as a
  * forehead, which is the defect that kept showing up.
  */
+/**
+ * Koi / common carp, measured off the reference line drawing rather than
+ * eyeballed. Fifteen stations were sampled for top and bottom outline and
+ * divided by the maximum body depth, so these numbers ARE the drawing.
+ *
+ * Two things the measurement made obvious:
+ *  - the outline is symmetric about a nearly horizontal axis: the body does
+ *    not hang below the midline the way a fancy goldfish does. The old curve
+ *    added a belly drop on top of an asymmetric profile, which is the bulge
+ *    under the head the user kept seeing.
+ *  - the caudal peduncle is thick (about 37% of max depth), not a needle.
+ */
 const PROFILE_KOI: Profile = [
-  [0.000, 0.028],
-  [0.050, 0.080],
-  [0.120, 0.205],
-  [0.200, 0.400],
-  [0.290, 0.615],
-  [0.370, 0.790],
-  [0.450, 0.910],
-  [0.520, 0.975],
-  [0.585, 0.998],   // deepest point, just forward of mid-body
-  [0.650, 0.995],
-  [0.710, 0.978],
-  [0.765, 0.950],
-  [0.815, 0.905],
-  [0.860, 0.845],
-  [0.900, 0.762],
-  [0.933, 0.655],
-  [0.960, 0.520],
-  [0.981, 0.360],
-  [1.000, 0.175],   // narrow snout
+  [0.000, 0.370],   // caudal peduncle
+  [0.046, 0.552],
+  [0.107, 0.717],
+  [0.215, 0.878],
+  [0.368, 0.970],
+  [0.475, 1.000],   // deepest, just forward of mid-body
+  [0.613, 0.996],
+  [0.690, 0.883],
+  [0.752, 0.761],
+  [0.799, 0.609],
+  [0.848, 0.422],
+  [0.900, 0.304],
+  [0.940, 0.165],
+  [0.969, 0.065],
+  [0.986, 0.024],
+  [1.000, 0.008],   // snout converges to a point
 ];
 
 const STYLES: Record<FishSpecies, FishStyle> = {
@@ -201,16 +210,23 @@ function bodySurface(style: FishStyle, t: number, angle: number): THREE.Vector3 
     z = THREE.MathUtils.lerp(zTube, zDome, domeW);
   }
 
-  // the lateral midline sits slightly high, so the belly hangs lower than the
-  // back rises — a symmetric tube reads as a sausage
-  let cy = -r * style.depth * L * 0.06;
+  // Body axis. The measured outline is symmetric about a near-horizontal line:
+  // a carp's belly does not hang below the midline the way a fancy goldfish's
+  // does. Keeping a belly drop here on top of an asymmetric profile is what put
+  // a bulge under the head.
+  //
+  // The offset must NOT be proportional to the local radius: multiplying by r
+  // pushes the deep mid-body sections down harder than the slim ones, which
+  // bows the belly line and is exactly the "bulge underneath" that was reported.
+  // A constant shift keeps the two outlines parallel.
+  let cy = style.koi > 0.5
+    ? -style.depth * L * 0.014
+    : -r * style.depth * L * 0.06;
 
-  // Snout. The dome above already carries the surface forward and closes it;
-  // adding a separate forward push on top of it made the muzzle long and
-  // drooping. All that is needed now is a small downward bias so the mouth sits
-  // below the eye line rather than dead centre on the nose.
-  const snout = Math.exp(-Math.pow((t - 0.90) / 0.055, 2));
-  cy -= snout * L * (style.barbels > 0 ? 0.026 : 0.019);
+  // The snout dips only slightly, so the mouth sits just below the eye line.
+  // The measured drawing has the axis essentially straight right to the tip.
+  const snout = Math.exp(-Math.pow((t - 0.93) / 0.045, 2));
+  cy -= snout * L * (style.barbels > 0 ? 0.008 : 0.014);
 
   return new THREE.Vector3(
     Math.cos(angle) * r * style.width * L,
@@ -249,9 +265,24 @@ function buildBodyGeometry(style: FishStyle, segs = 64, radial = 32): THREE.Buff
 
   for (let i = 0; i < rows; i++) {
     const t = i / segs;
+    // U must be ARC LENGTH around the section, not the normalized angle.
+    // With angle, a degree of arc near the flank covers more skin than a degree
+    // near the back, where the body curves away from the viewer — so the scale
+    // cells shrank toward the spine and the upper flank turned into a comb of
+    // vertical ribs. Cumulative chord length fixes the lattice aspect.
+    const ring: THREE.Vector3[] = [];
+    for (let j = 0; j <= radial; j++) {
+      ring.push(bodySurface(style, t, (j / radial) * Math.PI * 2));
+    }
+    const arc: number[] = [0];
+    for (let j = 1; j <= radial; j++) {
+      arc.push(arc[j - 1] + ring[j].distanceTo(ring[j - 1]));
+    }
+    const perim = Math.max(1e-6, arc[radial]);
+
     for (let j = 0; j < cols; j++) {
       const angle = (j / radial) * Math.PI * 2;
-      p.copy(bodySurface(style, t, angle));
+      p.copy(ring[j]);
       positions.push(p.x, p.y, p.z);
 
       // Analytic normals straight from the surface function. computeVertexNormals
@@ -261,7 +292,7 @@ function buildBodyGeometry(style: FishStyle, segs = 64, radial = 32): THREE.Buff
       const n = bodyNormal(style, t, angle);
       normals.push(n.x, n.y, n.z);
 
-      uvs.push(j / radial, t);
+      uvs.push(arc[j] / perim, t);
     }
   }
   for (let i = 0; i < segs; i++) {
@@ -528,7 +559,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
     // gives ~18 scales around and 22 rows along the body — the density in the
     // reference drawing. (2, 5) was putting 55 rows on the flank, which read
     // as fine grain rather than scales.
-    uScaleTiling: { value: new THREE.Vector2(2, 2) },
+    uScaleTiling: { value: new THREE.Vector2(3, 4) },
     // local y of the snout tip: the mouth is placed relative to this, because
     // the muzzle droops and an absolute y put the cleft on the cheek
     uTipY: { value: bodySurface(style, 1.0, 0).y },
@@ -596,21 +627,30 @@ export function makeFish(style: FishStyle, shared: Shared): {
       // horizontal stripes). The pattern itself is fine — the problem is
       // evaluating and differentiating it per pixel. So it is baked once on the
       // CPU into a normal map and a height map, and this shader just samples.
-      vec2 scaleUV(vec3 lp){
-        float ang = atan(lp.y, lp.x) / 6.28318 + 0.5;
-        float axis = lp.z / max(1e-4, uLen) + 0.5;
-        return vec2(ang, axis) * uScaleTiling;
+      // Scale coordinates come from the mesh UV, not from atan().
+      //
+      // atan wraps at +/-PI, and exactly on that line the UV derivative is
+      // discontinuous: the mip level jumps, the sampler picks a different level
+      // on either side, and the result is a hard vertical seam down the flank.
+      // The body already carries a proper cylindrical UV with duplicated seam
+      // vertices, so within every triangle the coordinates are continuous and
+      // the wrap is handled by the texture's own repeat mode.
+      vec2 scaleUV(){
+        return vUv * uScaleTiling;
       }
 
       // Perturb the shading normal using the baked relief, in a tangent frame.
       // The map's +x runs around the body and +y along it, so the two sampled
       // components map straight onto those axes.
-      vec3 applyScaleNormal(vec3 N, vec3 lp, float strength, out float hgt){
-        vec3 tn = texture2D(uScaleNormal, scaleUV(lp)).xyz * 2.0 - 1.0;
-        hgt = texture2D(uScaleHeight, scaleUV(lp)).r;
+      vec3 applyScaleNormal(vec3 N, float strength, out float hgt){
+        vec3 tn = texture2D(uScaleNormal, scaleUV()).xyz * 2.0 - 1.0;
+        hgt = texture2D(uScaleHeight, scaleUV()).r;
         vec3 hint = abs(N.y) > 0.92 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
         vec3 T = normalize(cross(N, hint) + 1e-4);   // around the body
         vec3 B = normalize(cross(N, T));             // along the body
+        // The baked map's green channel already points along +v; convert to a
+        // tilt in the surface tangent frame. Full strength: the previous 0.75
+        // was multiplying an already-weak map and left the scales flat.
         return normalize(N + (T * tn.x + B * tn.y) * strength);
       }
 
@@ -671,8 +711,12 @@ export function makeFish(style: FishStyle, shared: Shared): {
         // Kept shallow: the reference has a soft relief, and a strong value step
         // made the flank look like hexagonal tiles.
         {
-          float th = texture2D(uScaleHeight, scaleUV(lp)).r;
-          col *= mix(0.945, 1.025, th * scaleZone + (1.0 - scaleZone));
+          // The winner-takes-all lattice has deep troughs where one scale slips
+          // under the next, so the same modulation range that was right for the
+          // old shallow domes now darkens whole bands of the flank. The normal
+          // map carries the relief; albedo only needs a whisper of shading.
+          float th = texture2D(uScaleHeight, scaleUV()).r;
+          col *= mix(0.975, 1.012, th * scaleZone + (1.0 - scaleZone));
         }
 
         // ---- mouth, painted on the muzzle.
@@ -754,7 +798,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
         // ---- scale relief, from the baked normal map. Nothing is
         // differentiated per pixel, so no lattice border can spike.
         {
-          N = applyScaleNormal(N, lp, 0.75 * scaleZone, scaleH);
+          N = applyScaleNormal(N, 0.55 * scaleZone, scaleH);
         }
 
         // ---- lighting
@@ -867,64 +911,11 @@ export function makeFish(style: FishStyle, shared: Shared): {
   body.frustumCulled = false;
   group.add(body);
 
-  // ---- mouth: a real slit on the snout face.
-  //
-  // Painting it in the body shader kept failing because it had to be located
-  // in curved local space and kept wrapping onto the cheeks. A small quad laid
-  // just proud of the tip, facing forward, is deterministic: it cannot drift,
-  // and it opens with uMouth.
-  {
-    const tip = bodySurface(style, 1.0, 0);
-    // Reference proportions: the mouth spans roughly 7-8% of body length, i.e.
-    // most of the snout's width just behind the tip. Measuring at the very tip
-    // made it a 2% dash; measuring three units back made it a blade wider than
-    // the face. A little behind the tip is the right place.
-    const snoutHalfW = Math.max(
-      1e-3,
-      smoothProfile(style.profile, 0.968) * style.width * style.length,
-    );
-    const halfW = snoutHalfW * 1.10;
-    const halfH = snoutHalfW * 0.34;
-    const mGeo = new THREE.PlaneGeometry(halfW * 2, halfH * 2, 12, 6);
-    const mMat = new THREE.ShaderMaterial({
-      uniforms: { ...uniforms, uMouth: uniforms.uMouth },
-      vertexShader: /* glsl */ `
-        uniform float uMouth;
-        varying vec2 vUv;
-        varying vec3 vW;
-        void main(){
-          vUv = uv;
-          vec3 p = position;
-          // part vertically as the jaw drops
-          p.y *= 0.55 + uMouth * 1.6;
-          vW = (modelMatrix * vec4(p, 1.0)).xyz;
-          gl_Position = projectionMatrix * viewMatrix * vec4(vW, 1.0);
-        }
-      `,
-      fragmentShader: /* glsl */ `
-        varying vec2 vUv;
-        varying vec3 vW;
-        void main(){
-          // round the ends of the slit, darken toward the middle
-          vec2 c = vUv * 2.0 - 1.0;
-          float shape = 1.0 - length(vec2(c.x, c.y * 1.15));
-          if (shape < 0.0) discard;
-          // A mouth is a dark opening, not a red line. The warm rim in the
-          // previous version read as a painted stripe across a gold face.
-          vec3 col = mix(vec3(0.045, 0.016, 0.012), vec3(0.002, 0.001, 0.001),
-                         smoothstep(0.90, 0.05, shape));
-          gl_FragColor = vec4(col, 1.0);
-        }
-      `,
-      side: THREE.DoubleSide,
-    });
-    const mouth = new THREE.Mesh(mGeo, mMat);
-    // Seat it just inside the tip surface. The muzzle is a dome, so a quad on
-    // the apex protrudes; tucked a little back it reads as a cleft in the face.
-    mouth.position.set(0, tip.y, tip.z - snoutHalfW * 0.35);
-    mouth.frustumCulled = false;
-    group.add(mouth);
-  }
+  // ---- the mouth is painted on the body surface itself (see the `mouth`
+  // block in the body fragment shader). A separate quad, cone or torus always
+  // ends up either floating in front of the snout or clipping through it,
+  // because the muzzle is a tight dome and the pieces are rigid. Painted, it
+  // conforms exactly and can never protrude as a bar.
 
   // caudal fin (cloth-driven)
   const tail = buildTailCloth(style);
@@ -1008,12 +999,12 @@ export function makeFish(style: FishStyle, shared: Shared): {
     // under the lower lip. Angle 0 is the flank and -PI/2 is the belly, so the
     // mouth sits at a NEGATIVE angle; using positive values pushed the barbels
     // up onto the cheek at eye level. Each pair is mirrored with PI - a.
-    const upA = -0.30, loA = -0.78;
+    const upA = -0.42, loA = -0.95;
     const barbels: Array<{ t: number; ang: number; len: number; drop: number; out: number }> = [
-      { t: 0.972, ang: upA, len: 0.042, drop: -0.35, out: 0.60 },
-      { t: 0.972, ang: Math.PI - upA, len: 0.042, drop: -0.35, out: 0.60 },
-      { t: 0.980, ang: loA, len: 0.028, drop: -0.65, out: 0.50 },
-      { t: 0.980, ang: Math.PI - loA, len: 0.028, drop: -0.65, out: 0.50 },
+      { t: 0.930, ang: upA, len: 0.050, drop: -0.30, out: 0.55 },
+      { t: 0.930, ang: Math.PI - upA, len: 0.050, drop: -0.30, out: 0.55 },
+      { t: 0.945, ang: loA, len: 0.032, drop: -0.60, out: 0.48 },
+      { t: 0.945, ang: Math.PI - loA, len: 0.032, drop: -0.60, out: 0.48 },
     ];
     for (const b of barbels) {
       const rootP = bodySurface(style, b.t, b.ang);
@@ -1056,7 +1047,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
   const eyeAngle = Math.PI * 0.13;
   // Real goldfish eyes are prominent — roughly 6-7% of body length across.
   // The 0.021 value read as beads, so this is closer to life.
-  const eyeR = style.length * 0.036;
+  const eyeR = style.length * 0.030;
   const eyeGeo = new THREE.SphereGeometry(eyeR, 24, 18);
   // Each eye gets its own material so it can carry its outward gaze direction.
   // The old shader derived the pupil direction from sign(N.x) of the sphere's
@@ -1089,14 +1080,16 @@ export function makeFish(style: FishStyle, shared: Shared): {
           // spent most of its area on white sclera, which read as a beady
           // cartoon eye rather than a fish's.
           float facing = dot(N, normalize(uEyeDir));
-          float sclera   = smoothstep(0.10, 0.34, facing);   // pale rim
-          float irisBand = smoothstep(0.34, 0.46, facing);   // gold ring
-          float pupil    = smoothstep(0.62, 0.74, facing);   // big black disc
+          // The pale rim only exists at the very edge of the visible cap. Any
+          // wider and it becomes a white almond at the front of the head —
+          // the goldfish's dark eye has no visible sclera at all from outside.
+          float sclera   = smoothstep(0.02, 0.16, facing);
+          float irisBand = smoothstep(0.16, 0.30, facing);   // gold ring
+          float pupil    = smoothstep(0.42, 0.56, facing);   // big black disc
 
-          vec3 c = vec3(0.62, 0.60, 0.55);                   // sclera
-          c = mix(c, vec3(0.86, 0.63, 0.14), irisBand);       // iris gold
+          vec3 c = vec3(0.46, 0.36, 0.22);                   // rim, warm not white
+          c = mix(c, vec3(0.80, 0.56, 0.12), irisBand);       // iris gold
           c = mix(c, vec3(0.005, 0.004, 0.004), pupil);       // pupil
-          c = mix(c, c * 0.55, sclera * (1.0 - irisBand) * 0.4);
 
           // wet cornea: environment reflection plus a tight key highlight
           c += envColor(R, uSunDir) * 0.30;
@@ -1112,9 +1105,11 @@ export function makeFish(style: FishStyle, shared: Shared): {
     const ang = s > 0 ? eyeAngle : Math.PI - eyeAngle;
     const surf = bodySurface(style, t, ang);
     const nrm = bodyNormal(style, t, ang);
-    // Bury most of the sphere. The head curves away sharply here, so a
-    // nominally half-buried ball still shows more than half.
-    const centre = surf.clone().addScaledVector(nrm, -eyeR * 0.62);
+    // Seat the eye so a proper lens shows. At 0.62 of the radius buried, a
+    // head viewed from the front showed only a thin sliver of the sphere — it
+    // read as a slit rather than an eye. Just over half buried is right for a
+    // fish: the ball sits proud of the skin like a bead.
+    const centre = surf.clone().addScaledVector(nrm, -eyeR * 0.34);
     const eye = new THREE.Mesh(eyeGeo, makeEyeMat(nrm));
     eye.frustumCulled = false;
     eye.position.copy(centre);

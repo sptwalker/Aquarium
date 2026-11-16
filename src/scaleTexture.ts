@@ -20,50 +20,70 @@ export type ScaleMaps = {
 };
 
 const TILE = 512;
-const COLS = 9;   // scales around the body per tile
-const ROWS = 11;  // scale rows per tile
+// Both counts must be EVEN. The lattice staggers alternate rows by half a
+// scale, and that parity has to match across the wrap or the pattern steps at
+// the tile boundary — an odd count put a hard vertical line down the flank at
+// exactly the seam column.
+const COLS = 8;   // scales around the body per tile
+const ROWS = 12;  // scale rows per tile
 
-/** Signed height in [0,1] for the scale lattice, evaluated at tile uv. */
+/** Half-width / half-height of one scale, in lattice cells. */
+const RX = 0.95;
+const RY = 0.72;
+
+/**
+ * Height of the shingle at tile uv, in [0,1].
+ *
+ * Max-of-domes — the obvious implementation — is exactly what produced the
+ * hexagonal honeycomb. The crease where two equal domes meet is their
+ * perpendicular bisector, so three mutually adjacent scales bound a hexagon and
+ * the net is unavoidable. Real scales never show that line: at the boundary you
+ * see the *rim* of the scale lying on top, not an intersection curve.
+ *
+ * So each point is won by a single scale and takes only that scale's height.
+ * The priority is computed from dy/dx relative to the sample's own lattice cell,
+ * never from an absolute cell index — an absolute index cannot wrap, and using
+ * one put a hard step at the tile seam.
+ *
+ * Scales are wide relative to their rows (RX > RY) so each one covers most of
+ * the row behind it and only a crescent of its free edge shows, which is the
+ * shingled look.
+ */
 function heightAt(u: number, v: number): number {
   const gu = u * COLS;
   const gv = v * ROWS;
-  let best = 0;
+  const bx = Math.floor(gu);
+  const by = Math.floor(gv);
+  let bestPrio = -1e9;
+  let bestH = 0;
 
-  // Check the 3x3 neighbourhood, wrapping indices so the tile is seamless.
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      const cellX = Math.floor(gu) + dx;
-      const cellY = Math.floor(gv) + dy;
+  for (let dy = -2; dy <= 2; dy++) {
+    for (let dx = -2; dx <= 2; dx++) {
+      const cellY = by + dy;
+      // lower rows lie on top; the tiny dx term makes the pick unambiguous
+      // between two scales that overlap by exactly the same amount
+      const prio = dy + dx * 0.02;
+      if (prio <= bestPrio) continue;
 
-      // stagger alternate rows by half a scale
       const shift = ((cellY % 2) + 2) % 2 === 0 ? 0 : 0.5;
-      const cx = cellX + 0.5 + shift;
-      // the visual centre sits high in the cell so the free edge (bottom of the
-      // scale, pointing at the tail) hangs over the row beneath it
-      const cy = cellY + 0.40;
+      const cx = bx + dx + 0.5 + shift;
+      const cy = cellY + 0.5;
 
-      // work in wrapped cell space so the seam matches
       let ddx = gu - cx;
-      let ddy = gv - cy;
-      // take the shortest wrapped distance
+      const ddy = gv - cy;
       if (ddx > COLS * 0.5) ddx -= COLS;
       if (ddx < -COLS * 0.5) ddx += COLS;
-      if (ddy > ROWS * 0.5) ddy -= ROWS;
-      if (ddy < -ROWS * 0.5) ddy += ROWS;
 
-      // Scale is a disc wider than it is tall; radius spans about 1.2 cells so
-      // neighbours always overlap and only crescents stay visible.
-      const rx = ddx / 1.10;
-      const ry = ddy / 1.34;
-      const r2 = rx * rx + ry * ry;
-      if (r2 < 1) {
-        // domed surface: raised in the middle, dropping to zero at the rim
-        const h = Math.sqrt(1 - r2);
-        if (h > best) best = h;
-      }
+      const nx = ddx / RX;
+      const ny = ddy / RY;
+      const r2 = nx * nx + ny * ny;
+      if (r2 >= 1) continue;
+
+      bestPrio = prio;
+      bestH = Math.sqrt(1 - r2);
     }
   }
-  return best;
+  return bestH;
 }
 
 function makeCanvas(): HTMLCanvasElement {
