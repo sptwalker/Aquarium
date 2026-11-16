@@ -88,12 +88,13 @@ const PROFILE: ReadonlyArray<readonly [number, number]> = [
   [0.64, 0.985],
   [0.71, 0.950],
   [0.78, 0.895],
-  [0.85, 0.830],
-  [0.89, 0.800],
-  [0.93, 0.745],
-  [0.960, 0.650],
-  [0.985, 0.500],
-  [1.00, 0.330],   // muzzle pad: wide enough to carry a mouth on its front face
+  [0.85, 0.845],
+  [0.89, 0.775],
+  [0.925, 0.660],
+  [0.955, 0.500],
+  [0.978, 0.330],
+  [0.992, 0.190],
+  [1.00, 0.110],   // narrow snout: the profile converges instead of ending in a ball
 ];
 
 function smoothProfile(t: number): number {
@@ -124,25 +125,50 @@ function smoothProfile(t: number): number {
  */
 function bodySurface(style: FishStyle, t: number, angle: number): THREE.Vector3 {
   const L = style.length;
-  let r = smoothProfile(t);
+
+  // The snout is a dome, not a disc.
+  //
+  // Closing the body with a flat cap at t = 1 puts a circle facing the camera,
+  // which is why the front of the head was never anything but a flat face. Here
+  // the last stretch bends into a hemisphere so the surface curves forward and
+  // closes to a point.
+  //
+  // The two shapes are BLENDED over a window rather than switched at a
+  // threshold: a hard switch leaves the radius continuous but its slope not,
+  // and that C1 break showed up as a crease ringed around the head.
+  const T_DOME = 0.955;
+  const BLEND = 0.040;
+  const domeW = THREE.MathUtils.smoothstep(t, T_DOME, T_DOME + BLEND);
+  const prof = smoothProfile(t);
+
+  let r = prof;
   let z = (t - 0.5) * L;
+
+  if (domeW > 0) {
+    const k = Math.min(1, Math.max(0, (t - T_DOME) / (1 - T_DOME)));
+    const r0 = smoothProfile(T_DOME);
+    // Only the very tip is rounded. The snout itself is a TAPER (see the
+    // profile keys): a wide rounded cap made a bulbous nose with no direction,
+    // and an almost-pointed tip left nowhere for the mouth to sit. A short
+    // taper plus a small round-over reads as a muzzle.
+    const tipR = 0.22;
+    const domeR = r0 * Math.max(tipR, Math.pow(Math.max(0, 1 - Math.pow(k, 2.2)), 1 / 2.2));
+    const zTube = (t - 0.5) * L;
+    const zDome = (T_DOME - 0.5) * L + r0 * L * 0.10 * k;
+    r = THREE.MathUtils.lerp(prof, domeR, domeW);
+    z = THREE.MathUtils.lerp(zTube, zDome, domeW);
+  }
+
   // the lateral midline sits slightly high, so the belly hangs lower than the
   // back rises — a symmetric tube reads as a sausage
   let cy = -r * style.depth * L * 0.06;
 
-  // Muzzle. A fish does not end in a cut tube: the head carries a short pad
-  // forward that the mouth sits on. With a tip radius of only 8% the nose was a
-  // fine point and the face read as flat, so the pad is now broad enough (33%)
-  // to hold a mouth on its front face.
-  const tip = THREE.MathUtils.smoothstep(t, 0.78, 1.0);
-  const strength = style.barbels > 0 ? 0.150 : 0.100;
-  z += tip * tip * L * strength;
-  cy -= tip * tip * L * (style.barbels > 0 ? 0.036 : 0.024);
-
-  // Lip roll: a radial swell at the very front, so the muzzle ends in a soft
-  // pad rather than a disc.
-  const roll = Math.exp(-Math.pow((t - 0.965) / 0.024, 2));
-  r *= 1 + roll * (style.barbels > 0 ? 0.10 : 0.08);
+  // Snout. The dome above already carries the surface forward and closes it;
+  // adding a separate forward push on top of it made the muzzle long and
+  // drooping. All that is needed now is a small downward bias so the mouth sits
+  // below the eye line rather than dead centre on the nose.
+  const snout = Math.exp(-Math.pow((t - 0.90) / 0.055, 2));
+  cy -= snout * L * (style.barbels > 0 ? 0.026 : 0.019);
 
   return new THREE.Vector3(
     Math.cos(angle) * r * style.width * L,
@@ -423,6 +449,9 @@ export type FishUniforms = {
   uScaleNormal: { value: THREE.Texture | null };
   uScaleHeight: { value: THREE.Texture | null };
   uScaleTiling: { value: THREE.Vector2 };
+  uTipY: { value: number };
+  uTipZ: { value: number };
+  uTipRadius: { value: number };
 };
 
 export function makeFish(style: FishStyle, shared: Shared): {
@@ -454,6 +483,13 @@ export function makeFish(style: FishStyle, shared: Shared): {
     uScaleHeight: { value: scaleMaps.height },
     // around, along: enough tiles to give ~30 scale rows on a 1.1-1.45 body
     uScaleTiling: { value: new THREE.Vector2(2, 5) },
+    // local y of the snout tip: the mouth is placed relative to this, because
+    // the muzzle droops and an absolute y put the cleft on the cheek
+    uTipY: { value: bodySurface(style, 1.0, 0).y },
+    uTipZ: { value: bodySurface(style, 1.0, 0).z },
+    // radius of the snout cap: everything about the mouth is scaled by this,
+    // because the cap is tiny and absolute units made the mouth far too big
+    uTipRadius: { value: Math.max(1e-3, smoothProfile(1.0) * style.width * style.length) },
   };
 
   // ---- body
@@ -466,6 +502,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
       varying vec3 vWorld;
       varying vec3 vNormal;
       varying vec3 vLocal;
+      varying vec3 vLocalNormal;
       varying vec2 vUv;
       void main(){
         // No mouth geometry: indenting the snout in the mesh produced a ring
@@ -473,6 +510,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
         vec3 p = swimBend(position);
         vec3 n = swimBendNormal(position, normal);
         vLocal = position;
+        vLocalNormal = normal;
         vUv = uv;
         vWorld = (modelMatrix * vec4(p, 1.0)).xyz;
         vNormal = normalize(mat3(modelMatrix) * n);
@@ -489,10 +527,14 @@ export function makeFish(style: FishStyle, shared: Shared): {
       uniform float uWen;
       uniform float uKoi;
       uniform float uMouth;
+      uniform float uTipY;
+      uniform float uTipZ;
+      uniform float uTipRadius;
       uniform float uLen;
       varying vec3 vWorld;
       varying vec3 vNormal;
       varying vec3 vLocal;
+      varying vec3 vLocalNormal;
       varying vec2 vUv;
 
       uniform sampler2D uScaleNormal;
@@ -586,31 +628,45 @@ export function makeFish(style: FishStyle, shared: Shared): {
         }
 
         // ---- mouth, painted on the muzzle.
-        // The snout ends in a small cap facing forward; the mouth is a
-        // horizontal slit across it that parts vertically with uMouth. Painted
-        // here rather than built as geometry, because every rigid lip mesh
-        // looked like a ring hovering in front of a curved snout.
+        //
+        // Sizing this in absolute units was the whole bug: the mouth ellipse
+        // was ~5x the radius of the snout tip, so its "inside" test wrapped
+        // around the whole cap and appeared on both cheeks. Everything here is
+        // measured in units of the tip radius, and gated on being near the
+        // front face in z.
         {
-          float tipness = smoothstep(0.93, 1.0, along);
-          float dx = lp.x / max(0.001, uLen * 0.10);
-          float dy = lp.y / max(0.001, uLen * 0.10);
+          float tipR = max(0.001, uTipRadius);
+          float dx = lp.x / tipR;
+          float dy = (lp.y - uTipY) / tipR;
+          float dz = (uTipZ - lp.z) / tipR;
 
-          // a horizontal lens: wide in x, thin in y
-          float halfW = 0.42;
-          float halfH = 0.055 + uMouth * 0.30;
-          float open = smoothstep(halfW, halfW * 0.55, abs(dx))
-                     * smoothstep(halfH, halfH * 0.45, abs(dy));
-          open *= tipness;
+          // only the forward-facing cap
+          float front = smoothstep(1.10, 0.25, abs(dz));
 
-          // a thin, slightly raised lip line just outside the opening
-          float lip = smoothstep(halfW + 0.22, halfW + 0.04, abs(dx))
-                    * smoothstep(halfH + 0.16, halfH + 0.02, abs(dy))
-                    * (1.0 - open) * tipness;
-          col = mix(col, mix(col, vec3(0.92, 0.52, 0.40), 0.40), lip * 0.7);
+          // horizontal cleft, wide across, thin vertically, parts with uMouth
+          float halfW = 0.80;
+          float halfH = 0.085 + uMouth * 0.55;
+          float open = smoothstep(halfW, halfW * 0.86, abs(dx))
+                     * smoothstep(halfH, halfH * 0.80, abs(dy))
+                     * front;
 
-          // dark, wet throat, deepest at the centre of the slit
-          float depth = smoothstep(1.0, 0.15, length(vec2(dx / halfW, dy / max(0.02, halfH))));
-          col = mix(col, vec3(0.018, 0.005, 0.004), open * (0.55 + depth * 0.40));
+          // Upper lip: a fat roll above the cleft; lower jaw set slightly back.
+          float lipY = dy - (halfH + 0.16);
+          float upperLip = smoothstep(halfW * 1.05, halfW * 0.70, abs(dx))
+                         * smoothstep(0.15, 0.0, abs(lipY)) * step(lipY, 0.0)
+                         * front;
+          float lipY2 = dy + (halfH + 0.20);
+          float lowerJaw = smoothstep(halfW * 0.92, halfW * 0.60, abs(dx))
+                         * smoothstep(0.13, 0.0, abs(lipY2)) * step(0.0, lipY2)
+                         * front;
+
+          col = mix(col, col * 0.82, upperLip * 0.45);
+          col = mix(col, col * 0.90, lowerJaw * 0.28);
+
+          // wet throat: darkest at the centre of the slit
+          float depth = smoothstep(1.0, 0.05, length(vec2(dx / halfW, dy / max(0.02, halfH))));
+          col = mix(col, mix(vec3(0.060, 0.020, 0.014), vec3(0.006, 0.002, 0.001), depth),
+                    open * 0.97);
         }
 
         // ---- operculum (gill cover).
@@ -758,6 +814,64 @@ export function makeFish(style: FishStyle, shared: Shared): {
   const body = new THREE.Mesh(buildBodyGeometry(style), bodyMat);
   body.frustumCulled = false;
   group.add(body);
+
+  // ---- mouth: a real slit on the snout face.
+  //
+  // Painting it in the body shader kept failing because it had to be located
+  // in curved local space and kept wrapping onto the cheeks. A small quad laid
+  // just proud of the tip, facing forward, is deterministic: it cannot drift,
+  // and it opens with uMouth.
+  {
+    const tip = bodySurface(style, 1.0, 0);
+    // Size the mouth from the snout's own width a little behind the tip, not
+    // from the tip cap: the cap is deliberately narrow, so scaling from it made
+    // the mouth a dash.
+    const snoutR = Math.max(
+      1e-3,
+      smoothProfile(0.955) * style.width * style.length,
+    );
+    // a horizontal lens, wider than it is tall
+    const halfW = snoutR * 1.15;
+    const halfH = snoutR * 0.26;
+    const mGeo = new THREE.PlaneGeometry(halfW * 2, halfH * 2, 12, 6);
+    const mMat = new THREE.ShaderMaterial({
+      uniforms: { ...uniforms, uMouth: uniforms.uMouth },
+      vertexShader: /* glsl */ `
+        uniform float uMouth;
+        varying vec2 vUv;
+        varying vec3 vW;
+        void main(){
+          vUv = uv;
+          vec3 p = position;
+          // part vertically as the jaw drops
+          p.y *= 0.55 + uMouth * 1.6;
+          vW = (modelMatrix * vec4(p, 1.0)).xyz;
+          gl_Position = projectionMatrix * viewMatrix * vec4(vW, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        varying vec2 vUv;
+        varying vec3 vW;
+        void main(){
+          // round the ends of the slit, darken toward the middle
+          vec2 c = vUv * 2.0 - 1.0;
+          float shape = 1.0 - length(vec2(c.x, c.y * 1.15));
+          if (shape < 0.0) discard;
+          vec3 col = mix(vec3(0.075, 0.026, 0.020), vec3(0.004, 0.001, 0.001),
+                         smoothstep(0.85, 0.05, shape));
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `,
+      side: THREE.DoubleSide,
+    });
+    const mouth = new THREE.Mesh(mGeo, mMat);
+    // The snout ends in a forward-facing cap, so this quad lies ON that cap,
+    // a hair proud of it. Sinking it behind the tip (an earlier attempt) buried
+    // the mouth inside the head and left only a sliver visible.
+    mouth.position.set(0, tip.y, tip.z + style.length * 0.0015);
+    mouth.frustumCulled = false;
+    group.add(mouth);
+  }
 
   // caudal fin (cloth-driven)
   const tail = buildTailCloth(style);
