@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { NOISE, SWIM, ENV, CAUSTIC } from './glsl';
 import type { Shared } from './scene';
 import { FinCloth } from './cloth';
+import { makeScaleMaps } from './scaleTexture';
 
 export type FishSpecies = 'fantail' | 'oranda' | 'ryukin' | 'comet' | 'koi';
 
@@ -87,11 +88,12 @@ const PROFILE: ReadonlyArray<readonly [number, number]> = [
   [0.64, 0.985],
   [0.71, 0.950],
   [0.78, 0.895],
-  [0.85, 0.820],
-  [0.90, 0.740],
-  [0.95, 0.600],
-  [0.98, 0.440],
-  [1.00, 0.280],   // muzzle radius ~28% of max: a rounded nose, not a point
+  [0.85, 0.830],
+  [0.89, 0.800],
+  [0.93, 0.745],
+  [0.960, 0.650],
+  [0.985, 0.500],
+  [1.00, 0.330],   // muzzle pad: wide enough to carry a mouth on its front face
 ];
 
 function smoothProfile(t: number): number {
@@ -122,21 +124,25 @@ function smoothProfile(t: number): number {
  */
 function bodySurface(style: FishStyle, t: number, angle: number): THREE.Vector3 {
   const L = style.length;
-  const r = smoothProfile(t);
+  let r = smoothProfile(t);
   let z = (t - 0.5) * L;
   // the lateral midline sits slightly high, so the belly hangs lower than the
   // back rises — a symmetric tube reads as a sausage
   let cy = -r * style.depth * L * 0.06;
 
-  // Koi carry a protruding muzzle: the mouth sits at the end of a short snout
-  // rather than flush on a rounded nose. Push the last stretch forward, most
-  // strongly at the tip and tapering back to nothing.
-  if (style.barbels > 0) {
-    const tip = THREE.MathUtils.smoothstep(t, 0.86, 1.0);
-    z += tip * tip * L * 0.055;
-    // ...and drop it slightly, so the mouth is below the eye line
-    cy -= tip * tip * L * 0.012;
-  }
+  // Muzzle. A fish does not end in a cut tube: the head carries a short pad
+  // forward that the mouth sits on. With a tip radius of only 8% the nose was a
+  // fine point and the face read as flat, so the pad is now broad enough (33%)
+  // to hold a mouth on its front face.
+  const tip = THREE.MathUtils.smoothstep(t, 0.78, 1.0);
+  const strength = style.barbels > 0 ? 0.150 : 0.100;
+  z += tip * tip * L * strength;
+  cy -= tip * tip * L * (style.barbels > 0 ? 0.036 : 0.024);
+
+  // Lip roll: a radial swell at the very front, so the muzzle ends in a soft
+  // pad rather than a disc.
+  const roll = Math.exp(-Math.pow((t - 0.965) / 0.024, 2));
+  r *= 1 + roll * (style.barbels > 0 ? 0.10 : 0.08);
 
   return new THREE.Vector3(
     Math.cos(angle) * r * style.width * L,
@@ -414,6 +420,9 @@ export type FishUniforms = {
   uWen: { value: number };
   uKoi: { value: number };
   uMouth: { value: number };
+  uScaleNormal: { value: THREE.Texture | null };
+  uScaleHeight: { value: THREE.Texture | null };
+  uScaleTiling: { value: THREE.Vector2 };
 };
 
 export function makeFish(style: FishStyle, shared: Shared): {
@@ -423,6 +432,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
   tail: FinCloth;
   updateTail: (dt: number, time: number, flow: THREE.Vector3) => void;
 } {
+  const scaleMaps = makeScaleMaps();
   const uniforms: FishUniforms = {
     uTime: shared.uTime,
     uSwimPhase: { value: Math.random() * 10 },
@@ -440,6 +450,10 @@ export function makeFish(style: FishStyle, shared: Shared): {
     uWen: { value: style.wen },
     uKoi: { value: style.koi },
     uMouth: { value: 0 },
+    uScaleNormal: { value: scaleMaps.normal },
+    uScaleHeight: { value: scaleMaps.height },
+    // around, along: enough tiles to give ~30 scale rows on a 1.1-1.45 body
+    uScaleTiling: { value: new THREE.Vector2(2, 5) },
   };
 
   // ---- body
@@ -481,47 +495,35 @@ export function makeFish(style: FishStyle, shared: Shared): {
       varying vec3 vLocal;
       varying vec2 vUv;
 
-      // Overlapping scales.
+      uniform sampler2D uScaleNormal;
+      uniform sampler2D uScaleHeight;
+      uniform vec2 uScaleTiling;   // (around, along) in tiles
+
+      // Scales come from a baked texture, not from maths in the shader.
       //
-      // Each scale is a rounded cap sitting in a staggered lattice. A point on
-      // the body can be covered by several scales from neighbouring cells, so
-      // we take the highest one. Where a scale's edge crosses a lower one you
-      // get the classic shingled lip — that is the "wave layered" look, and it
-      // cannot be produced by a single cell lookup.
-      //
-      // Returns height in [-1, 1]; rand is the winning cell's random tint.
-      float scaleField(vec3 lp, out float rand, out float lipEdge){
+      // Four attempts to build the lattice here all failed the same way: a
+      // per-cell height field has a crease wherever the cells meet, and
+      // differentiating it in the shader turns those creases into a visible
+      // hexagonal net (or, once the lattice was shortened to avoid that, into
+      // horizontal stripes). The pattern itself is fine — the problem is
+      // evaluating and differentiating it per pixel. So it is baked once on the
+      // CPU into a normal map and a height map, and this shader just samples.
+      vec2 scaleUV(vec3 lp){
         float ang = atan(lp.y, lp.x) / 6.28318 + 0.5;
-        // Dense: real goldfish carry 25-30 scale rows along the flank.
-        vec2 g = vec2(ang * 46.0, lp.z * 52.0);
-        vec2 base = floor(g);
+        float axis = lp.z / max(1e-4, uLen) + 0.5;
+        return vec2(ang, axis) * uScaleTiling;
+      }
 
-        float best = -2.0;
-        float bestRand = 0.0;
-        vec2 bestId = vec2(0.0);
-
-        for (int dy = -1; dy <= 1; dy++) {
-          for (int dx = -1; dx <= 1; dx++) {
-            vec2 id = base + vec2(float(dx), float(dy));
-            float shift = mod(id.y, 2.0) * 0.5;
-            vec2 c = vec2(id.x + 0.5 + shift, id.y + 0.62);
-            vec2 d = (g - c) * vec2(1.0, 0.86);
-            float r = length(d);
-            float h = 1.0 - r;
-            if (h > best) {
-              best = h;
-              bestId = id;
-            }
-          }
-        }
-        float col = mod(bestId.x + 100.0, 46.0);
-        bestRand = fract(sin(dot(vec2(col, bestId.y), vec2(12.9898, 78.233))) * 43758.5453);
-
-        // A narrow band right at the rim. Kept thin and weak on purpose: a wide
-        // dark band turns the flank into a honeycomb of black outlines.
-        lipEdge = smoothstep(0.16, 0.04, best) * step(0.0, best);
-        rand = bestRand;
-        return clamp(best, -1.0, 1.0);
+      // Perturb the shading normal using the baked relief, in a tangent frame.
+      // The map's +x runs around the body and +y along it, so the two sampled
+      // components map straight onto those axes.
+      vec3 applyScaleNormal(vec3 N, vec3 lp, float strength, out float hgt){
+        vec3 tn = texture2D(uScaleNormal, scaleUV(lp)).xyz * 2.0 - 1.0;
+        hgt = texture2D(uScaleHeight, scaleUV(lp)).r;
+        vec3 hint = abs(N.y) > 0.92 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
+        vec3 T = normalize(cross(N, hint) + 1e-4);   // around the body
+        vec3 B = normalize(cross(N, T));             // along the body
+        return normalize(N + (T * tn.x + B * tn.y) * strength);
       }
 
       void main(){
@@ -571,18 +573,17 @@ export function makeFish(style: FishStyle, shared: Shared): {
         float wenN = uWen * head * fbm3(vec2(lp.z * 12.0, lp.y * 9.0));
         col = mix(col, mix(col, vec3(0.92, 0.55, 0.30), 0.45), wenN * 0.55);
 
-        // ---- overlapping scales: tint by the winning scale, with a lit lip
-        float cellRand, lipEdge;
-        float hgt = scaleField(vLocal, cellRand, lipEdge);
-        // no scales on the snout; they run all the way back over the peduncle
+        // ---- shingled scales, sampled from the baked map.
+        // no scales on the snout; they run back over the peduncle
         float scaleZone = smoothstep(0.06, 0.20, along) * smoothstep(0.86, 0.72, along);
-        hgt *= scaleZone;
-        lipEdge *= scaleZone;
 
-        // ---- per-scale tint variation, and the raised lip catching light
-        col *= 0.955 + 0.075 * cellRand;
-        col *= 1.0 + hgt * 0.07;
-        col += vec3(0.055, 0.040, 0.028) * lipEdge;
+        float scaleH;                       // filled in by applyScaleNormal
+        // The height map darkens the trough where one scale slips under the next;
+        // that occlusion is what makes the shingles read as layered.
+        {
+          float th = texture2D(uScaleHeight, scaleUV(lp)).r;
+          col *= mix(0.90, 1.04, th * scaleZone + (1.0 - scaleZone));
+        }
 
         // ---- mouth, painted on the muzzle.
         // The snout ends in a small cap facing forward; the mouth is a
@@ -612,37 +613,40 @@ export function makeFish(style: FishStyle, shared: Shared): {
           col = mix(col, vec3(0.018, 0.005, 0.004), open * (0.55 + depth * 0.40));
         }
 
-        // ---- operculum: a subtle plate behind the gill line, with a dark slit
-        // along its trailing edge. Painted on the shared surface, so it cannot
-        // show a seam the way a separate mesh did.
+        // ---- operculum (gill cover).
+        //
+        // Three things make a gill cover read: the plate itself is a raised
+        // crescent, its trailing edge casts a dark slit, and the leading edge
+        // catches a highlight. The previous version had a 0.7%-of-body slit,
+        // which is sub-pixel at normal viewing distance — effectively invisible.
         {
-          // the gill line sits at a fixed position along the body, on the flank
-          float gillLine = smoothstep(0.755, 0.735, along) * smoothstep(0.700, 0.725, along);
-          float onFlank = smoothstep(0.55, 0.15, abs(lp.y) / max(0.001, uLen * 0.16));
-          // darken toward the trailing edge to read as a slit
-          float slit = smoothstep(0.745, 0.735, along) * smoothstep(0.700, 0.735, along);
-          col *= 1.0 - gillLine * onFlank * 0.10;
-          col = mix(col, vec3(0.16, 0.055, 0.045), slit * onFlank * 0.55);
+          // ay: -1 at the belly, +1 at the back
+          float ay = lp.y / max(0.001, uLen * 0.135);
+          // The edge sweeps forward as it climbs, and curves harder near the
+          // belly. A straight stroke reads as a scratch on the paint.
+          float gillLine = 0.762 - 0.060 * ay * ay - 0.030 * ay;
+          float d = along - gillLine;
+
+          // present across the flank, fading before the dorsal ridge and belly
+          float onFlank = smoothstep(1.10, 0.30, abs(ay));
+
+          // the slit: widened to ~2.5% of body length so it survives at
+          // distance, and darkest in its middle
+          float slit = smoothstep(0.013, 0.0, abs(d)) * onFlank;
+          // the cover plate: raised skin forward of the slit
+          float plate = smoothstep(0.115, 0.006, d) * smoothstep(-0.012, 0.008, d) * onFlank;
+          // a lit ridge where the plate lifts off the body
+          float ridge = smoothstep(0.022, 0.002, abs(d + 0.092)) * onFlank;
+
+          col = mix(col, col * 1.12, plate * 0.70);
+          col += vec3(0.13, 0.098, 0.078) * ridge * 0.62;
+          col = mix(col, vec3(0.055, 0.016, 0.013), slit * 0.92);
         }
 
-        // ---- normal relief from the same field: the domed caps tilt the
-        // surface, and the rim steps down into the scale below it
+        // ---- scale relief, from the baked normal map. Nothing is
+        // differentiated per pixel, so no lattice border can spike.
         {
-          float e = 0.0035;
-          float r0, l0, r1, l1, r2, l2;
-          scaleField(vLocal + vec3(0.0, e, 0.0), r0, l0);
-          scaleField(vLocal + vec3(0.0, 0.0, e), r1, l1);
-          scaleField(vLocal - vec3(0.0, e, 0.0), r2, l2);
-          float dy = (r0 - r2) * scaleZone;
-          float dz = (r1 - r0) * scaleZone;
-          // 0.55 tilted normals so hard that whole patches went black. Scales
-          // are a shallow relief; the read comes from the tint and the lit lip.
-          float amp = 0.16;
-          // Stable tangent frame near the back pole.
-          vec3 hint = abs(N.y) > 0.92 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
-          vec3 T = normalize(cross(N, hint) + 1e-4);
-          vec3 B = normalize(cross(N, T));
-          N = normalize(N + (T * dy + B * dz) * amp);
+          N = applyScaleNormal(N, lp, 0.75 * scaleZone, scaleH);
         }
 
         // ---- lighting
