@@ -58,47 +58,89 @@ const PROFILE_GOLDFISH: Profile = [
 ];
 
 /**
- * Koi / common carp, traced from the reference line drawing.
+ * Koi / common carp — GENERATED from the reference line drawing.
  *
- * Two things make the koi silhouette: the deepest point sits near the middle
- * of the body rather than behind the gill, and the head falls away in one
- * continuous sweep to a narrow snout. Any bulge in that sweep reads as a
- * forehead, which is the defect that kept showing up.
- */
-/**
- * Koi / common carp, measured off the reference line drawing rather than
- * eyeballed. Fifteen stations were sampled for top and bottom outline and
- * divided by the maximum body depth, so these numbers ARE the drawing.
+ * These two tables are not hand-tuned. `tools/lineart-trace.mjs` decodes the
+ * drawing, fuses the fin hatching into solid ink so the fins drop out of the
+ * body region, flood-fills the background and takes the largest enclosed white
+ * area as the body. `tools/lineart-profile.mjs` then resamples that silhouette
+ * into the two curves below: half-depth along the axis, and how far the
+ * centreline drifts above/below mid-body.
  *
- * Two things the measurement made obvious:
- *  - the outline is symmetric about a nearly horizontal axis: the body does
- *    not hang below the midline the way a fancy goldfish does. The old curve
- *    added a belly drop on top of an asymmetric profile, which is the bulge
- *    under the head the user kept seeing.
- *  - the caudal peduncle is thick (about 37% of max depth), not a needle.
+ * Previous versions hand-fit a radius curve and then adjusted an offset on top
+ * of it. That double-parameterisation is why the silhouette could never be made
+ * to agree with the drawing: the offset had no counterpart in the reference, so
+ * every fix to the head broke the flank. Measuring both curves separately
+ * removes the freedom that was being misused.
+ *
+ * Units: PROFILE is half-depth / max half-depth; AXIS is the centreline drift
+ * in units of max half-depth.
  */
 const PROFILE_KOI: Profile = [
-  [0.000, 0.370],   // caudal peduncle
-  [0.046, 0.552],
-  [0.107, 0.717],
-  [0.215, 0.878],
-  [0.368, 0.970],
-  [0.475, 1.000],   // deepest, just forward of mid-body
-  [0.613, 0.996],
-  // ---- head. The radius has to keep shrinking through the whole head, with
-  // the slope steepening monotonically. Any station that sits at nearly the
-  // same radius as its neighbour flatlines the outline and the head reads as a
-  // tube with a cap on it, which is exactly what was being reported.
-  [0.650, 0.955],
-  [0.700, 0.905],
-  [0.750, 0.840],
-  [0.800, 0.755],
-  [0.850, 0.648],
-  [0.900, 0.500],
-  [0.940, 0.340],
-  [0.968, 0.200],
-  [0.988, 0.095],
-  [1.000, 0.018],   // snout converges to a point
+  // The very last station is a small round-over, not the measured value. The
+  // drawing's t=0 column is where the body meets the caudal fin, and the body
+  // is closed there by a flat cap; at the peduncle's full 0.36 half-depth that
+  // cap reads as a cylinder plugged into the tail. Closing it to a small radius
+  // tucks the cap inside the fin root, where it cannot be seen. Everything from
+  // t=0.04 on is measured.
+  [0.000, 0.085],
+  [0.014, 0.190],
+  [0.040, 0.330],
+  [0.080, 0.386],
+  [0.120, 0.438],
+  [0.160, 0.495],
+  [0.200, 0.594],
+  [0.250, 0.720],
+  [0.300, 0.810],
+  [0.350, 0.884],
+  [0.400, 0.938],
+  [0.450, 0.979],
+  [0.500, 1.000],   // deepest point, mid-body
+  [0.550, 0.990],
+  [0.600, 0.923],
+  [0.650, 0.856],
+  [0.700, 0.829],
+  [0.750, 0.758],
+  [0.790, 0.691],
+  [0.830, 0.639],
+  [0.860, 0.593],
+  [0.890, 0.545],
+  [0.915, 0.473],
+  [0.940, 0.373],
+  [0.960, 0.288],
+  [0.976, 0.222],
+  [0.990, 0.203],
+  [1.000, 0.189],
+];
+
+const AXIS_KOI: Profile = [
+  [0.000, -0.038],
+  [0.040, -0.046],
+  [0.080, -0.062],
+  [0.120, -0.074],
+  [0.160, -0.098],
+  [0.200, -0.117],
+  [0.250, -0.120],
+  [0.300, -0.098],
+  [0.350, -0.074],
+  [0.400, -0.053],
+  [0.450, -0.029],
+  [0.500, -0.008],
+  [0.550, 0.013],
+  [0.600, 0.077],
+  [0.650, 0.127],
+  [0.700, 0.112],
+  [0.750, 0.113],
+  [0.790, 0.103],
+  [0.830, 0.063],
+  [0.860, 0.030],
+  [0.890, -0.002],
+  [0.915, 0.001],
+  [0.940, 0.045],
+  [0.960, 0.088],
+  [0.976, 0.117],
+  [0.990, 0.127],
+  [1.000, 0.134],
 ];
 
 const STYLES: Record<FishSpecies, FishStyle> = {
@@ -211,52 +253,63 @@ function bodySurface(style: FishStyle, t: number, angle: number): THREE.Vector3 
     z = THREE.MathUtils.lerp(zTube, zDome, domeW);
   }
 
-  // Body axis. The measured outline is symmetric about a near-horizontal line:
-  // a carp's belly does not hang below the midline the way a fancy goldfish's
-  // does. Keeping a belly drop here on top of an asymmetric profile is what put
-  // a bulge under the head.
+  // Body axis.
   //
-  // The offset must NOT be proportional to the local radius: multiplying by r
-  // pushes the deep mid-body sections down harder than the slim ones, which
-  // bows the belly line and is exactly the "bulge underneath" that was reported.
-  // A constant shift keeps the two outlines parallel.
-  let cy = style.koi > 0.5
-    ? -style.depth * L * 0.014
-    : -r * style.depth * L * 0.06;
+  // For the koi this is NOT a constant offset: it is the measured centreline
+  // of the drawing (AXIS_KOI). The line art genuinely has the axis rise through
+  // the head and dip slightly behind the gill, and reproducing the outline
+  // without that drift is impossible — a straight axis with a symmetric profile
+  // can only produce a fish that is top-bottom symmetric, which the drawing is
+  // not.
+  //
+  // For the goldfish species (no measured curve) the old constant-below-flank
+  // offset stays, so they are unchanged.
+  let cy: number;
+  if (style.koi > 0.5) {
+    // half-depth in the same units the axis table uses
+    cy = smoothProfile(AXIS_KOI, t) * style.depth * L;
+  } else {
+    cy = -r * style.depth * L * 0.06;
+  }
 
   // The snout dips only slightly, so the mouth sits just below the eye line.
-  // The measured drawing has the axis essentially straight right to the tip.
   const snout = Math.exp(-Math.pow((t - 0.93) / 0.045, 2));
-  cy -= snout * L * (style.barbels > 0 ? 0.008 : 0.014);
+  if (style.koi <= 0.5) cy -= snout * L * 0.014;
 
-  // The muzzle is a WEDGE, not a cone.
+  // The muzzle does NOT get squashed.
   //
-  // A circular cross-section tapering to a point gives a beak, and any mouth
-  // painted on it wraps around a curved surface, which is why it never read as
-  // a split. Squashing y over the last stretch turns the snout into a
-  // horizontally flattened blade: now there is a genuine upper lip and lower
-  // jaw with a flat front between them, and the cleft has something to sit in.
-  // The squash is gated on the muzzle so the body sections stay round.
-  const wedge = THREE.MathUtils.smoothstep(t, 0.87, 0.995) * 0.62;
-  const squashY = 1 - wedge;
+  // An earlier version flattened y over the last stretch to make a "wedge", on
+  // the theory that a circular cone reads as a beak. It does — but the line-art
+  // silhouette IS the side view, so its height curve is exactly the height the
+  // muzzle must have. Squashing it made the model thinner than the drawing by
+  // 0.25 half-depths at the tip, which `tools/outline-compare.mjs` reports as
+  // the worst residual in the whole outline. The muzzle is left round and the
+  // lips are formed by the cleft below instead.
+  const squashY = 1;
 
-  // ---- mouth cleft, cut into the surface.
+  // ---- mouth, cut into the surface.
   //
   // Painting a mouth only ever produced a dark patch on a convex muzzle. What
-  // makes a mouth read is the silhouette: the tip must actually fork into an
-  // upper lip and a lower jaw. This carves a horizontal notch at the midline of
-  // the last 8% of the body, pushing the skin back in z and flaring the two
-  // lips apart in y. Gated on t so nothing behind the snout is touched.
-  const cleftT = THREE.MathUtils.smoothstep(t, 0.925, 0.995);
+  // makes a mouth read is the silhouette plus the two rolls of flesh around it:
+  // the tip must fork into an upper lip and a lower jaw, and each lip needs its
+  // own crest so it catches light.
+  //
+  // Three bands, all gated on t so nothing behind the snout is touched:
+  //   notch — the slot itself, skin pulled back in z
+  //   lip   — a small outward swell just above and below it
+  const cleftT = THREE.MathUtils.smoothstep(t, 0.930, 0.992);
   const dyN = Math.sin(angle);                     // -1 belly .. +1 back
-  const band = 1 - THREE.MathUtils.smoothstep(Math.abs(dyN), 0.10, 0.46);
-  const notch = cleftT * band;
-  if (notch > 0) {
-    // pull the skin back to form the slot
-    z -= notch * L * 0.020;
-    // and part the lips: up above the slot, down below it
-    const lip = Math.sign(dyN) * notch * L * 0.016;
-    cy += lip;
+  const ady = Math.abs(dyN);
+  const notch = cleftT * (1 - THREE.MathUtils.smoothstep(ady, 0.04, 0.26));
+  const lipBand = cleftT
+    * THREE.MathUtils.smoothstep(ady, 0.20, 0.30)
+    * (1 - THREE.MathUtils.smoothstep(ady, 0.44, 0.72));
+  if (notch > 0 || lipBand > 0) {
+    // the slot: a shallow, wide groove rather than a cut
+    z -= notch * L * 0.013;
+    // the lips part slightly, and each swells outward
+    cy += Math.sign(dyN) * notch * L * 0.005;
+    r *= 1 + lipBand * 0.075;
   }
 
   // ---- operculum (gill cover), as GEOMETRY.
