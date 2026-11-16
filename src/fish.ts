@@ -6,26 +6,90 @@ import { makeScaleMaps } from './scaleTexture';
 
 export type FishSpecies = 'fantail' | 'oranda' | 'ryukin' | 'comet' | 'koi';
 
+type Profile = ReadonlyArray<readonly [number, number]>;
+
 type FishStyle = {
   length: number;
   /** relative body depth (half-height / length) */
   depth: number;
   /** relative body width (half-width / length) */
   width: number;
+  /** axial radius curve; koi and goldfish genuinely differ */
+  profile: Profile;
   hueA: THREE.Vector3;
   hueB: THREE.Vector3;
   belly: THREE.Vector3;
   finTint: THREE.Vector3;
   wen: number;
-  /** koi livery: white ground with red patches */
+  /** koi livery: metallic gold body with a few deeper-orange plates */
   koi: number;
   /** 1 = four barbels at the mouth (koi); 0 = none (goldfish) */
   barbels: number;
 };
 
+/**
+ * Relative radius along the axis: t = 0 at the tail tip, t = 1 at the snout.
+ *
+ * Each species carries its own curve. They were sharing one for a long time,
+ * which is why the koi kept inheriting a goldfish's rounded head — the two
+ * fish have genuinely different outlines and no single set of numbers serves
+ * both.
+ */
+// Fancy goldfish: deep, egg-shaped, with a short blunt head.
+const PROFILE_GOLDFISH: Profile = [
+  [0.00, 0.030],
+  [0.04, 0.090],
+  [0.10, 0.200],
+  [0.18, 0.400],
+  [0.28, 0.660],
+  [0.38, 0.860],
+  [0.48, 0.960],
+  [0.56, 0.990],
+  [0.64, 0.985],
+  [0.71, 0.950],
+  [0.78, 0.895],
+  [0.85, 0.845],
+  [0.89, 0.775],
+  [0.925, 0.660],
+  [0.955, 0.500],
+  [0.978, 0.330],
+  [0.992, 0.190],
+  [1.00, 0.110],
+];
+
+/**
+ * Koi / common carp, traced from the reference line drawing.
+ *
+ * Two things make the koi silhouette: the deepest point sits near the middle
+ * of the body rather than behind the gill, and the head falls away in one
+ * continuous sweep to a narrow snout. Any bulge in that sweep reads as a
+ * forehead, which is the defect that kept showing up.
+ */
+const PROFILE_KOI: Profile = [
+  [0.000, 0.028],
+  [0.050, 0.080],
+  [0.120, 0.205],
+  [0.200, 0.400],
+  [0.290, 0.615],
+  [0.370, 0.790],
+  [0.450, 0.910],
+  [0.520, 0.975],
+  [0.585, 0.998],   // deepest point, just forward of mid-body
+  [0.650, 0.995],
+  [0.710, 0.978],
+  [0.765, 0.950],
+  [0.815, 0.905],
+  [0.860, 0.845],
+  [0.900, 0.762],
+  [0.933, 0.655],
+  [0.960, 0.520],
+  [0.981, 0.360],
+  [1.000, 0.175],   // narrow snout
+];
+
 const STYLES: Record<FishSpecies, FishStyle> = {
   fantail: {
-    length: 1.10, depth: 0.205, width: 0.125,
+    length: 1.10, depth: 0.205, width: 0.125, profile: PROFILE_GOLDFISH,
     hueA: new THREE.Vector3(1.0, 0.26, 0.020),
     hueB: new THREE.Vector3(0.92, 0.10, 0.014),
     belly: new THREE.Vector3(1.0, 0.92, 0.82),
@@ -33,7 +97,7 @@ const STYLES: Record<FishSpecies, FishStyle> = {
     wen: 0.0, koi: 0.0, barbels: 0,
   },
   oranda: {
-    length: 1.02, depth: 0.215, width: 0.130,
+    length: 1.02, depth: 0.215, width: 0.130, profile: PROFILE_GOLDFISH,
     hueA: new THREE.Vector3(0.98, 0.21, 0.018),
     hueB: new THREE.Vector3(0.86, 0.07, 0.012),
     belly: new THREE.Vector3(1.0, 0.90, 0.78),
@@ -41,7 +105,7 @@ const STYLES: Record<FishSpecies, FishStyle> = {
     wen: 1.0, koi: 0.0, barbels: 0,
   },
   ryukin: {
-    length: 0.94, depth: 0.220, width: 0.135,
+    length: 0.94, depth: 0.220, width: 0.135, profile: PROFILE_GOLDFISH,
     hueA: new THREE.Vector3(0.97, 0.40, 0.045),
     hueB: new THREE.Vector3(0.88, 0.44, 0.30),
     belly: new THREE.Vector3(1.0, 0.95, 0.88),
@@ -49,21 +113,21 @@ const STYLES: Record<FishSpecies, FishStyle> = {
     wen: 0.0, koi: 0.0, barbels: 0,
   },
   comet: {
-    length: 1.38, depth: 0.150, width: 0.095,
+    length: 1.38, depth: 0.150, width: 0.095, profile: PROFILE_KOI,
     hueA: new THREE.Vector3(1.0, 0.30, 0.020),
     hueB: new THREE.Vector3(0.97, 0.52, 0.030),
     belly: new THREE.Vector3(1.0, 0.95, 0.87),
     finTint: new THREE.Vector3(1.0, 0.46, 0.16),
     wen: 0.0, koi: 0.0, barbels: 0,
   },
-  // Kohaku-type koi: white ground with red-orange patches, four barbels, a
-  // slimmer body than a fancy goldfish, and a protruding rostrum.
+  // Metallic gold carp, following the second reference: a warm golden body,
+  // slightly deeper orange along the back, pale fins, four barbels.
   koi: {
-    length: 1.45, depth: 0.170, width: 0.105,
-    hueA: new THREE.Vector3(1.0, 0.30, 0.035),   // the red patches
-    hueB: new THREE.Vector3(1.0, 0.47, 0.10),
-    belly: new THREE.Vector3(0.96, 0.95, 0.92),  // white ground
-    finTint: new THREE.Vector3(0.97, 0.90, 0.84),
+    length: 1.45, depth: 0.165, width: 0.100, profile: PROFILE_KOI,
+    hueA: new THREE.Vector3(1.00, 0.62, 0.06),    // golden ground
+    hueB: new THREE.Vector3(0.96, 0.42, 0.03),    // deeper orange on the back
+    belly: new THREE.Vector3(1.00, 0.90, 0.62),   // pale gold underside
+    finTint: new THREE.Vector3(1.00, 0.72, 0.26),
     wen: 0.0, koi: 1.0, barbels: 1,
   },
 };
@@ -75,31 +139,9 @@ const STYLES: Record<FishSpecies, FishStyle> = {
 // or eyes sunk inside the head. Everything below samples `bodySurface()`.
 // ---------------------------------------------------------------------------
 
-/** Relative radius along the axis: 0 = tail tip, 1 = snout. */
-const PROFILE: ReadonlyArray<readonly [number, number]> = [
-  [0.00, 0.030],
-  [0.04, 0.090],
-  [0.10, 0.200],   // caudal peduncle
-  [0.18, 0.400],
-  [0.28, 0.660],
-  [0.38, 0.860],
-  [0.48, 0.960],
-  [0.56, 0.990],   // deepest point, behind the gill cover
-  [0.64, 0.985],
-  [0.71, 0.950],
-  [0.78, 0.895],
-  [0.85, 0.845],
-  [0.89, 0.775],
-  [0.925, 0.660],
-  [0.955, 0.500],
-  [0.978, 0.330],
-  [0.992, 0.190],
-  [1.00, 0.110],   // narrow snout: the profile converges instead of ending in a ball
-];
-
-function smoothProfile(t: number): number {
+function smoothProfile(profile: Profile, t: number): number {
   const tt = THREE.MathUtils.clamp(t, 0, 1);
-  const K = PROFILE;
+  const K = profile;
   let i = 0;
   while (i < K.length - 2 && tt > K[i + 1][0]) i++;
   const [t1, p1] = K[i];
@@ -139,14 +181,14 @@ function bodySurface(style: FishStyle, t: number, angle: number): THREE.Vector3 
   const T_DOME = 0.955;
   const BLEND = 0.040;
   const domeW = THREE.MathUtils.smoothstep(t, T_DOME, T_DOME + BLEND);
-  const prof = smoothProfile(t);
+  const prof = smoothProfile(style.profile, t);
 
   let r = prof;
   let z = (t - 0.5) * L;
 
   if (domeW > 0) {
     const k = Math.min(1, Math.max(0, (t - T_DOME) / (1 - T_DOME)));
-    const r0 = smoothProfile(T_DOME);
+    const r0 = smoothProfile(style.profile, T_DOME);
     // Only the very tip is rounded. The snout itself is a TAPER (see the
     // profile keys): a wide rounded cap made a bulbous nose with no direction,
     // and an almost-pointed tip left nowhere for the mouth to sit. A short
@@ -242,7 +284,7 @@ function buildBodyGeometry(style: FishStyle, segs = 64, radial = 32): THREE.Buff
     const centreIndex = positions.length / 3;
     const c = bodySurface(style, t, 0);
     // collapse the cap centre onto the axis
-    const r = smoothProfile(t);
+    const r = smoothProfile(style.profile, t);
     positions.push(0, -r * style.depth * style.length * 0.06, c.z);
     const n = new THREE.Vector3(0, 0, pointForward ? 1 : -1);
     normals.push(n.x, n.y, n.z);
@@ -482,14 +524,18 @@ export function makeFish(style: FishStyle, shared: Shared): {
     uScaleNormal: { value: scaleMaps.normal },
     uScaleHeight: { value: scaleMaps.height },
     // around, along: enough tiles to give ~30 scale rows on a 1.1-1.45 body
-    uScaleTiling: { value: new THREE.Vector2(2, 5) },
+    // Tiles around / along. The baked lattice is 9 x 11 scales, so (2, 2)
+    // gives ~18 scales around and 22 rows along the body — the density in the
+    // reference drawing. (2, 5) was putting 55 rows on the flank, which read
+    // as fine grain rather than scales.
+    uScaleTiling: { value: new THREE.Vector2(2, 2) },
     // local y of the snout tip: the mouth is placed relative to this, because
     // the muzzle droops and an absolute y put the cleft on the cheek
     uTipY: { value: bodySurface(style, 1.0, 0).y },
     uTipZ: { value: bodySurface(style, 1.0, 0).z },
     // radius of the snout cap: everything about the mouth is scaled by this,
     // because the cap is tiny and absolute units made the mouth far too big
-    uTipRadius: { value: Math.max(1e-3, smoothProfile(1.0) * style.width * style.length) },
+    uTipRadius: { value: Math.max(1e-3, smoothProfile(style.profile, 1.0) * style.width * style.length) },
   };
 
   // ---- body
@@ -588,17 +634,18 @@ export function makeFish(style: FishStyle, shared: Shared): {
         // Big soft blotches read as koi; the dense noise above reads as a
         // gradient, which is why the koi was coming out plain orange.
         if (uKoi > 0.5) {
-          // two octaves at very low frequency: blobs several body-lengths wide
-          float b1 = fbm3(vec2(lp.z * 2.6 + 11.0, lp.y * 3.4));
-          float b2 = fbm3(vec2(lp.z * 5.1 + 3.0, lp.y * 6.2) + 41.0);
-          // "patch" is a reserved word in GLSL
-          float blotch = b1 * 0.72 + b2 * 0.28;
-          // hard-ish edge: koi patches have crisp menpo borders
-          float red = smoothstep(0.46, 0.53, blotch);
-          // the back carries the colour; the belly stays white
-          red *= smoothstep(-0.35, 0.15, lp.y / max(0.001, uLen * 0.10));
-          red *= smoothstep(0.92, 0.80, along);       // white face, red body
-          col = mix(vec3(0.95, 0.94, 0.90), uHueA * vec3(1.05, 0.86, 0.80), red);
+          // The reference is a single metallic gold carp, not a kohaku. Broad
+          // low-frequency warm/cool bands give the body depth without turning
+          // it into white-with-red-plates, which is what the previous hard
+          // patch mask produced.
+          float b1 = fbm3(vec2(lp.z * 2.2 + 11.0, lp.y * 3.0));
+          float warm = smoothstep(0.34, 0.70, b1);
+          // gold ground, deepening to amber along the back and fading pale
+          // toward the belly
+          vec3 gold = mix(uHueA, uHueB, warm * 0.55);
+          float dorsum = smoothstep(-0.55, 0.85, lp.y / max(0.001, uLen * 0.105));
+          gold = mix(gold * 0.96, gold * vec3(0.90, 0.74, 0.52), dorsum);
+          col = gold;
         }
 
         // belly: a low, narrow band; gated on height so it cannot climb the
@@ -620,11 +667,12 @@ export function makeFish(style: FishStyle, shared: Shared): {
         float scaleZone = smoothstep(0.06, 0.20, along) * smoothstep(0.86, 0.72, along);
 
         float scaleH;                       // filled in by applyScaleNormal
-        // The height map darkens the trough where one scale slips under the next;
-        // that occlusion is what makes the shingles read as layered.
+        // The height map darkens the trough where one scale slips under the next.
+        // Kept shallow: the reference has a soft relief, and a strong value step
+        // made the flank look like hexagonal tiles.
         {
           float th = texture2D(uScaleHeight, scaleUV(lp)).r;
-          col *= mix(0.90, 1.04, th * scaleZone + (1.0 - scaleZone));
+          col *= mix(0.945, 1.025, th * scaleZone + (1.0 - scaleZone));
         }
 
         // ---- mouth, painted on the muzzle.
@@ -671,32 +719,36 @@ export function makeFish(style: FishStyle, shared: Shared): {
 
         // ---- operculum (gill cover).
         //
-        // Three things make a gill cover read: the plate itself is a raised
-        // crescent, its trailing edge casts a dark slit, and the leading edge
-        // catches a highlight. The previous version had a 0.7%-of-body slit,
-        // which is sub-pixel at normal viewing distance — effectively invisible.
+        // In the reference this is not a line drawn on the side: it is a broad
+        // crescent whose front edge is a soft step in the skin, with a short
+        // shadow under its rear edge near the belly. Making the edge a thin
+        // straight stroke is what has been reading as a scratch across the
+        // body, so the slit is now short, low, and the plate edge is soft.
         {
-          // ay: -1 at the belly, +1 at the back
-          float ay = lp.y / max(0.001, uLen * 0.135);
-          // The edge sweeps forward as it climbs, and curves harder near the
-          // belly. A straight stroke reads as a scratch on the paint.
-          float gillLine = 0.762 - 0.060 * ay * ay - 0.030 * ay;
+          float ay = lp.y / max(0.001, uLen * 0.135);   // -1 belly .. +1 back
+          // The edge runs almost vertical on the upper flank and curves
+          // forward as it descends.
+          float gillLine = 0.752 - 0.055 * ay * ay - 0.045 * ay;
           float d = along - gillLine;
 
-          // present across the flank, fading before the dorsal ridge and belly
-          float onFlank = smoothstep(1.10, 0.30, abs(ay));
+          // Only across the flank; gone at the dorsal ridge and the belly.
+          float onFlank = smoothstep(1.05, 0.35, abs(ay));
 
-          // the slit: widened to ~2.5% of body length so it survives at
-          // distance, and darkest in its middle
-          float slit = smoothstep(0.013, 0.0, abs(d)) * onFlank;
-          // the cover plate: raised skin forward of the slit
-          float plate = smoothstep(0.115, 0.006, d) * smoothstep(-0.012, 0.008, d) * onFlank;
-          // a lit ridge where the plate lifts off the body
-          float ridge = smoothstep(0.022, 0.002, abs(d + 0.092)) * onFlank;
+          // The cover plate: soft shading break, wide and gentle.
+          float plate = smoothstep(0.150, 0.020, d) * onFlank;
+          col = mix(col, col * 0.93, plate * 0.55);
 
-          col = mix(col, col * 1.12, plate * 0.70);
-          col += vec3(0.13, 0.098, 0.078) * ridge * 0.62;
-          col = mix(col, vec3(0.055, 0.016, 0.013), slit * 0.92);
+          // A short shadow tucks under the rear edge, strongest low on the
+          // flank and fading out before the back — that asymmetry is what
+          // stops it looking like a drawn line.
+          float slitLow = smoothstep(0.30, -0.55, ay);
+          float slit = smoothstep(0.018, 0.002, abs(d)) * onFlank * slitLow;
+          col = mix(col, col * 0.72, slit * 0.85);
+
+          // The lip of the plate catches a little light along its front.
+          float edge = smoothstep(0.020, 0.004, abs(d + 0.128)) * onFlank;
+          col = mix(col, col * 1.06, edge * 0.55);
+          col = mix(col, vec3(0.070, 0.024, 0.018), slit * 0.85);
         }
 
         // ---- scale relief, from the baked normal map. Nothing is
@@ -823,16 +875,16 @@ export function makeFish(style: FishStyle, shared: Shared): {
   // and it opens with uMouth.
   {
     const tip = bodySurface(style, 1.0, 0);
-    // Size the mouth from the snout's own width a little behind the tip, not
-    // from the tip cap: the cap is deliberately narrow, so scaling from it made
-    // the mouth a dash.
-    const snoutR = Math.max(
+    // Reference proportions: the mouth spans roughly 7-8% of body length, i.e.
+    // most of the snout's width just behind the tip. Measuring at the very tip
+    // made it a 2% dash; measuring three units back made it a blade wider than
+    // the face. A little behind the tip is the right place.
+    const snoutHalfW = Math.max(
       1e-3,
-      smoothProfile(0.955) * style.width * style.length,
+      smoothProfile(style.profile, 0.968) * style.width * style.length,
     );
-    // a horizontal lens, wider than it is tall
-    const halfW = snoutR * 1.15;
-    const halfH = snoutR * 0.26;
+    const halfW = snoutHalfW * 1.10;
+    const halfH = snoutHalfW * 0.34;
     const mGeo = new THREE.PlaneGeometry(halfW * 2, halfH * 2, 12, 6);
     const mMat = new THREE.ShaderMaterial({
       uniforms: { ...uniforms, uMouth: uniforms.uMouth },
@@ -857,18 +909,19 @@ export function makeFish(style: FishStyle, shared: Shared): {
           vec2 c = vUv * 2.0 - 1.0;
           float shape = 1.0 - length(vec2(c.x, c.y * 1.15));
           if (shape < 0.0) discard;
-          vec3 col = mix(vec3(0.075, 0.026, 0.020), vec3(0.004, 0.001, 0.001),
-                         smoothstep(0.85, 0.05, shape));
+          // A mouth is a dark opening, not a red line. The warm rim in the
+          // previous version read as a painted stripe across a gold face.
+          vec3 col = mix(vec3(0.045, 0.016, 0.012), vec3(0.002, 0.001, 0.001),
+                         smoothstep(0.90, 0.05, shape));
           gl_FragColor = vec4(col, 1.0);
         }
       `,
       side: THREE.DoubleSide,
     });
     const mouth = new THREE.Mesh(mGeo, mMat);
-    // The snout ends in a forward-facing cap, so this quad lies ON that cap,
-    // a hair proud of it. Sinking it behind the tip (an earlier attempt) buried
-    // the mouth inside the head and left only a sliver visible.
-    mouth.position.set(0, tip.y, tip.z + style.length * 0.0015);
+    // Seat it just inside the tip surface. The muzzle is a dome, so a quad on
+    // the apex protrudes; tucked a little back it reads as a cleft in the face.
+    mouth.position.set(0, tip.y, tip.z - snoutHalfW * 0.35);
     mouth.frustumCulled = false;
     group.add(mouth);
   }
@@ -1030,18 +1083,20 @@ export function makeFish(style: FishStyle, shared: Shared): {
           vec3 V = normalize(cameraPosition - vW);
           vec3 R = reflect(-V, N);
 
-          // how far this point is from the eye's outward axis
+          // A carp eye is mostly dark: a large black pupil ringed by a narrow
+          // band of gold, with only a sliver of pale sclera at the outer edge.
+          // The reference is unmistakable about this — the previous version
+          // spent most of its area on white sclera, which read as a beady
+          // cartoon eye rather than a fish's.
           float facing = dot(N, normalize(uEyeDir));
-          // big amber iris, smaller dark pupil, thin dark limbal ring
-          float iris = smoothstep(0.28, 0.55, facing);
-          float pupil = smoothstep(0.86, 0.95, facing);
-          float ring = smoothstep(0.30, 0.40, facing) * smoothstep(0.52, 0.44, facing);
+          float sclera   = smoothstep(0.10, 0.34, facing);   // pale rim
+          float irisBand = smoothstep(0.34, 0.46, facing);   // gold ring
+          float pupil    = smoothstep(0.62, 0.74, facing);   // big black disc
 
-          vec3 sclera = vec3(0.80, 0.76, 0.68);
-          vec3 irisCol = mix(vec3(0.55, 0.30, 0.05), vec3(0.86, 0.62, 0.16), facing);
-          vec3 c = mix(sclera, irisCol, iris);
-          c = mix(c, vec3(0.006, 0.005, 0.004), pupil);
-          c = mix(c, c * 0.35, ring * 0.85);
+          vec3 c = vec3(0.62, 0.60, 0.55);                   // sclera
+          c = mix(c, vec3(0.86, 0.63, 0.14), irisBand);       // iris gold
+          c = mix(c, vec3(0.005, 0.004, 0.004), pupil);       // pupil
+          c = mix(c, c * 0.55, sclera * (1.0 - irisBand) * 0.4);
 
           // wet cornea: environment reflection plus a tight key highlight
           c += envColor(R, uSunDir) * 0.30;
