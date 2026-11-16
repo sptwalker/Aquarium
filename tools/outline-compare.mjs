@@ -14,7 +14,7 @@
 // usage: node tools/outline-compare.mjs [traceJson]
 import fs from 'node:fs';
 
-const traceJson = process.argv[2] || 'tools/la-7.json';
+const traceJson = process.argv[2] || 'tools/lineart.json';
 const d = JSON.parse(fs.readFileSync(traceJson, 'utf8'));
 
 // ---- model tables, read straight out of the source

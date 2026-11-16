@@ -9,7 +9,7 @@
 import fs from 'node:fs';
 import zlib from 'node:zlib';
 
-const traceJson = process.argv[2] || 'tools/la-7.json';
+const traceJson = process.argv[2] || 'tools/lineart.json';
 const outPng = process.argv[3] || 'shots/outline-overlay.png';
 const d = JSON.parse(fs.readFileSync(traceJson, 'utf8'));
 

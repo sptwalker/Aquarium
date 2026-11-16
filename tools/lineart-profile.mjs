@@ -1,12 +1,12 @@
 // Emits a PROFILE_KOI table straight from the traced line art.
 //
-// Nothing here is eyeballed: it reads tools/la-7.json (the traced body
+// Nothing here is eyeballed: it reads tools/lineart.json (the traced body
 // silhouette) and resamples it at the stations the body mesh needs, with extra
 // resolution through the head because that is where the outline curve changes
 // fastest.
 import fs from 'node:fs';
 
-const json = process.argv[2] || 'tools/la-7.json';
+const json = process.argv[2] || 'tools/lineart.json';
 const DILATE = Number(process.argv[3] ?? 7);
 const d = JSON.parse(fs.readFileSync(json, 'utf8'));
 const S = d.stations;
