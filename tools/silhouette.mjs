@@ -15,7 +15,7 @@ const ca = [
 const executablePath = ca.find((p) => existsSync(p));
 if (!executablePath) throw new Error('no chrome/edge found');
 
-export async function captureSilhouette(base, species, { width = 1400, height = 700 } = {}) {
+export async function captureSilhouette(base, species, { width = 1400, height = 700, all = false } = {}) {
   const browser = await puppeteer.launch({
     executablePath,
     headless: 'new',
@@ -27,11 +27,17 @@ export async function captureSilhouette(base, species, { width = 1400, height = 
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 
-  await page.goto(`${base}/showcase.html?species=${species}&silhouette=1`, {
+  await page.goto(`${base}/showcase.html?species=${species}&silhouette=${all ? 'all' : '1'}`, {
     waitUntil: 'networkidle0', timeout: 60000,
   });
   await page.waitForFunction('window.__ready === true', { timeout: 60000 });
-  await new Promise((r) => setTimeout(r, 1000));
+
+  // Freeze the swim wave before reading the outline. With the default swim
+  // amplitude the body is bent into an S, so the top and bottom edges are not
+  // the profile at all — that straight-sided bias would be baked into every
+  // comparison.
+  await page.evaluate(() => window.__showcase?.setPlaying(false));
+  await new Promise((r) => setTimeout(r, 1200));
 
   const shot = await page.evaluate(() => {
     const cv = document.getElementById('view');

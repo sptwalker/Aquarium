@@ -184,7 +184,7 @@ const STYLES: Record<FishSpecies, FishStyle> = {
   // Metallic gold carp, following the second reference: a warm golden body,
   // slightly deeper orange along the back, pale fins, four barbels.
   koi: {
-    length: 1.45, depth: 0.165, width: 0.100, profile: PROFILE_KOI,
+    length: 1.45, depth: 0.165, width: 0.072, profile: PROFILE_KOI,
     hueA: new THREE.Vector3(1.00, 0.62, 0.06),    // golden ground
     hueB: new THREE.Vector3(0.96, 0.42, 0.03),    // deeper orange on the back
     belly: new THREE.Vector3(1.00, 0.90, 0.62),   // pale gold underside
@@ -332,14 +332,19 @@ function bodySurface(style: FishStyle, t: number, angle: number): THREE.Vector3 
   // raised rear lip instead.
   const flankW = Math.pow(Math.abs(Math.cos(angle)), 1.6);
   if (flankW > 0.02) {
-    // plate: a broad, gentle swell over the cover, strongest at its rear
-    const plate = THREE.MathUtils.smoothstep(t, 0.760, 0.790)
-                * (1 - THREE.MathUtils.smoothstep(t, 0.806, 0.868));
-    // the free rear edge of the plate, lifted so it casts its own shadow line
-    const lip = Math.exp(-Math.pow((t - 0.800) / 0.011, 2));
-    // the opening itself: a narrow V behind the lip
-    const groove = Math.exp(-Math.pow((t - 0.7802) / 0.0045, 2));
-    const out = (plate * 0.009 + lip * 0.007 - groove * 0.006) * L * flankW;
+    // Ordinates are ordered so the free rear edge (the gill opening) is the
+    // LOW end, i.e. toward the tail, and the plate sweeps forward from it.
+    // Getting the order backwards put the groove in front of the lip and the
+    // painted gill line at a different t than the raised plate — which is why
+    // the cover never lined up with its own edge.
+    const OPEN = 0.782;          // gill opening: the rear, free edge
+    const plate = THREE.MathUtils.smoothstep(t, OPEN + 0.004, OPEN + 0.018)
+                * (1 - THREE.MathUtils.smoothstep(t, 0.845, 0.900));
+    // the rolled rear lip of the cover, just ahead of the opening
+    const lip = Math.exp(-Math.pow((t - (OPEN + 0.014)) / 0.0085, 2));
+    // the opening itself: a narrow, shallow V
+    const groove = Math.exp(-Math.pow((t - OPEN) / 0.006, 2));
+    const out = (plate * 0.016 + lip * 0.010 - groove * 0.011) * L * flankW;
     const ca = Math.cos(angle), sa = Math.sin(angle);
     return new THREE.Vector3(
       ca * r * style.width * L + ca * out,
@@ -900,28 +905,30 @@ export function makeFish(style: FishStyle, shared: Shared): {
         // body, so the slit is now short, low, and the plate edge is soft.
         {
           float ay = lp.y / max(0.001, uLen * 0.135);   // -1 belly .. +1 back
-          // The edge runs almost vertical on the upper flank and curves
-          // forward as it descends.
-          float gillLine = 0.752 - 0.055 * ay * ay - 0.045 * ay;
+          // Must match the geometric operculum in bodySurface(): the opening
+          // sits at t = 0.782 and the raised cover runs forward from it. The
+          // painted line used to be at 0.752, 3% of the body behind the plate
+          // it was supposed to be shading.
+          float gillLine = 0.782 - 0.030 * ay * ay - 0.022 * ay;
           float d = along - gillLine;
 
           // Only across the flank; gone at the dorsal ridge and the belly.
           float onFlank = smoothstep(1.05, 0.35, abs(ay));
 
           // The cover plate: soft shading break, wide and gentle.
-          float plate = smoothstep(0.150, 0.020, d) * onFlank;
+          float plate = smoothstep(0.120, 0.010, -d) * onFlank;
           col = mix(col, col * 0.93, plate * 0.55);
 
           // A short shadow tucks under the rear edge, strongest low on the
           // flank and fading out before the back — that asymmetry is what
           // stops it looking like a drawn line.
           float slitLow = smoothstep(0.30, -0.55, ay);
-          float slit = smoothstep(0.018, 0.002, abs(d)) * onFlank * slitLow;
+          float slit = smoothstep(0.011, 0.001, abs(d)) * onFlank * slitLow;
           col = mix(col, col * 0.72, slit * 0.85);
 
           // The lip of the plate catches a little light along its front.
-          float edge = smoothstep(0.020, 0.004, abs(d + 0.128)) * onFlank;
-          col = mix(col, col * 1.06, edge * 0.55);
+          float edge = smoothstep(0.016, 0.003, abs(d - 0.013)) * onFlank;
+          col = mix(col, col * 1.10, edge * 0.65);
           col = mix(col, vec3(0.070, 0.024, 0.018), slit * 0.85);
         }
 

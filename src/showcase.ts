@@ -18,6 +18,11 @@ const toggle = document.getElementById('toggle') as HTMLButtonElement;
 // rendered shape against the reference line art, pixel for pixel, instead of
 // anyone eying a screenshot.
 const silhouetteMode = new URLSearchParams(location.search).has('silhouette');
+// `silhouette=all` keeps the fins in the mask. The body-only silhouette is the
+// right thing for checking the profile against the drawing, but the user is
+// judging the whole animal — and the dorsal, pectoral and pelvic fins add a
+// great deal of apparent bulk. Both views are needed.
+const silhouetteAll = new URLSearchParams(location.search).get('silhouette') === 'all';
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
@@ -81,24 +86,35 @@ if (silhouetteMode) {
   const bodyBox = new THREE.Box3().setFromObject(built.body);
   const bs = bodyBox.getSize(new THREE.Vector3());
   const bc = bodyBox.getCenter(new THREE.Vector3());
-  const halfH = bs.y * 0.75;
+  // The fish's long axis is LOCAL Z (z = (t-0.5)*L), and the camera looks down
+  // x, so screen-horizontal maps to z. Framing off bs.x (the body's *thickness*)
+  // made the box far narrower than the fish and clipped both ends flat.
+  const halfW = bs.z * 0.56;
   const aspect = window.innerWidth / window.innerHeight;
-  ortho = new THREE.OrthographicCamera(-halfH * aspect, halfH * aspect, halfH, -halfH, 0.01, 100);
-  // straight-on side view, +x looking toward -x
-  ortho.position.set(bc.x + 20, bc.y, bc.z);
+  const halfH = halfW / aspect;
+  ortho = new THREE.OrthographicCamera(-halfW, halfW, halfH, -halfH, 0.01, 200);
+  ortho.position.set(bc.x + 50, bc.y, bc.z);
   ortho.up.set(0, 1, 0);
   ortho.lookAt(bc.x, bc.y, bc.z);
 
   // flat fill, no lighting at all: this is a mask, not a render
   const silhouetteMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-  built.body.material = silhouetteMat;
-  built.body.geometry.clearGroups();
   silhouetteScene = new THREE.Scene();
   silhouetteScene.background = new THREE.Color(0, 0, 0);
-  silhouetteScene.add(built.body);
+
+  if (silhouetteAll) {
+    // every mesh in the group, which includes the fins and the cloth tail
+    built.group.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh) m.material = silhouetteMat;
+    });
+    silhouetteScene.add(built.group);
+  } else {
+    built.body.material = silhouetteMat;
+    built.body.geometry.clearGroups();
+    silhouetteScene.add(built.body);
+  }
   built.body.position.set(0, 0, 0);
-  // undo the earlier recentring, which moved the group not the mesh
-  ortho.position.set(20, bc.y, bc.z);
 }
 
 // ---- composite: ACES + gamma + a soft studio vignette
