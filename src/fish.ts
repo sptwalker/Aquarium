@@ -535,20 +535,42 @@ function buildFin(
   const idx: number[] = [];
 
   // Span along the body axis, in t (0 tail tip .. 1 snout).
-  // Pelvic fins sit behind and below the pectorals — a pair on the belly that
-  // the model was missing entirely.
+  // Span along the body axis, in t (0 tail tip .. 1 snout).
+  //
+  // Measured from the drawing by tools/fin-measure.mjs, which subtracts the
+  // traced body outline from the full ink envelope: the difference IS the fin.
+  // Those numbers were in u-from-the-nose, so t = 1 - u here.
+  //
+  // The spans are pulled apart slightly from the raw measurement. In the
+  // drawing the fins are drawn as separate shapes hanging off the flank; on the
+  // model each is a swept surface, and when two adjacent spans overlap the two
+  // membranes merge into one slab under the belly. Tucking the rear end of the
+  // pectoral forward and the front end of the pelvic back keeps them distinct.
+  //   dorsal     u 0.39–0.73   (t 0.27–0.61)
+  //   pectoral   u 0.24–0.39   (t 0.61–0.76)
+  //   pelvic     u 0.44–0.58   (t 0.42–0.56)
+  //   anal       u 0.63–0.75   (t 0.25–0.37)
   const tSpan: [number, number] =
-    kind === 'dorsal' ? [0.30, 0.66]
-    : kind === 'anal' ? [0.24, 0.44]
-    : kind === 'pectoral' ? [0.60, 0.73]
-    : [0.44, 0.56];
+    kind === 'dorsal' ? [0.27, 0.61]
+    : kind === 'anal' ? [0.25, 0.37]
+    : kind === 'pectoral' ? [0.62, 0.75]
+    : [0.42, 0.56];
 
-  // how tall the fin grows relative to body length
+  // How far the fin projects past the skin, in body-length units.
+  //
+  // These are the drawing's own measurements from tools/fin-measure.mjs, used
+  // directly. An earlier version scaled them by per-fin multipliers produced by
+  // tools/fin-solve.mjs — but those multipliers were computed from a model whose
+  // fins pointed sideways and so projected almost nothing, and applying them
+  // made the pectoral 35% of body length against the drawing's 14%. The
+  // measured projections are the target; FIN_TRIM corrects the small residual
+  // overshoot that appears once a swept membrane is actually projected.
+  const FIN_TRIM = 0.88;
   const maxH =
-    kind === 'dorsal' ? L * 0.095
-    : kind === 'anal' ? L * 0.065
-    : kind === 'pectoral' ? L * 0.058
-    : L * 0.050;
+    kind === 'dorsal' ? L * 0.175 * FIN_TRIM
+    : kind === 'anal' ? L * 0.126 * FIN_TRIM
+    : kind === 'pectoral' ? L * 0.144 * FIN_TRIM
+    : L * 0.153 * FIN_TRIM;
 
   // Root angle on the cross-section. Pectorals and pelvics sit on the flank /
   // ventral flank, mirrored to opposite sides.
@@ -570,12 +592,18 @@ function buildFin(
     let spanDir: THREE.Vector3;
     let chordDir: THREE.Vector3;
     if (kind === 'pectoral') {
-      // sweeps back and outward from low on the flank
-      spanDir = new THREE.Vector3(side * 0.70, -0.34, -0.62).normalize();
+      // Sweeps BACK AND DOWN, almost in the side plane.
+      //
+      // It used to point mainly outward (+x), so in a side view it projected to
+      // almost nothing — measuring the model showed only 0.056 of body length
+      // against the drawing's 0.143, a 2.6x shortfall that no amount of scale
+      // would fix. The fin has to lie against the flank to be seen from the
+      // side, which is also how a resting carp holds it.
+      spanDir = new THREE.Vector3(side * 0.26, -0.62, -0.74).normalize();
       chordDir = new THREE.Vector3(0, 0, 1);
     } else if (kind === 'pelvic') {
-      // hangs down and back, closer to the body than a pectoral
-      spanDir = new THREE.Vector3(side * 0.42, -0.80, -0.44).normalize();
+      // Hangs down and back, nearly in the side plane as well.
+      spanDir = new THREE.Vector3(side * 0.20, -0.88, -0.44).normalize();
       chordDir = new THREE.Vector3(0, 0, 1);
     } else {
       spanDir = nrm.clone();
@@ -598,7 +626,19 @@ function buildFin(
       // the body: at d = 0 every column collapses onto the single sampled skin
       // point, so the root is a line lying on the surface instead of a floating
       // straight edge hovering over a curved flank.
-      const chord = maxH * env * Math.pow(d, 0.72) * 1.15;
+      //
+      // The chord must NOT be a multiple of the fin's height. Tying it to maxH
+      // meant that enlarging a fin also made it wider along the body, so the
+      // pectoral and pelvic grew until they touched each other and ran past
+      // their own spans — one continuous slab under the belly instead of two
+      // separate fins. A pectoral is a long narrow paddle; a dorsal nearly
+      // spans the body, so its chord is the tall one.
+      const chordScale =
+        kind === 'dorsal' ? 1.15
+        : kind === 'anal' ? 0.55
+        : kind === 'pectoral' ? 0.50
+        : 0.45;
+      const chord = maxH * env * Math.pow(d, 0.72) * chordScale;
       const sweepBack = d * d * maxH * 0.55;
 
       const across = (u - 0.5) * chord;

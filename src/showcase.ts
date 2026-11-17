@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CausticPass } from './caustic';
 import { makeShared, type Shared } from './scene';
 import { makeFish, STYLES, type FishSpecies } from './fish';
+import { SWIM } from './glsl';
 import { FullPass } from './post';
 
 const canvas = document.getElementById('view') as HTMLCanvasElement;
@@ -26,6 +27,22 @@ const silhouetteAll = new URLSearchParams(location.search).get('silhouette') ===
 // `silhouette=top` looks straight down instead of from the side, so the plan
 // view can be checked against the top-down reference drawing.
 const silhouetteTop = new URLSearchParams(location.search).get('silhouette') === 'top';
+
+// ---- deterministic mode
+//
+// Silhouette captures must be reproducible. The swim phase and the caudal
+// cloth's flutter both come from Math.random(), and the cloth integrates over
+// real frame deltas, so two captures of the same build disagreed enough to swing
+// a fin measurement by a factor of three — which is why successive "fixes" kept
+// being aimed at a target that moved between runs. Pinning the RNG makes a
+// capture a function of the geometry alone.
+if (silhouetteMode) {
+  let seed = 123456789;
+  Math.random = () => {
+    seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5;
+    return ((seed >>> 0) % 100000) / 100000;
+  };
+}
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
@@ -131,7 +148,29 @@ if (silhouetteMode) {
     });
     silhouetteScene.add(built.group);
   } else {
-    built.body.material = silhouetteMat;
+    // The silhouette must keep the SWIM vertex shader.
+    //
+    // A plain MeshBasicMaterial renders the REST pose: it never calls
+    // swimBend, so the body is straight even while the tank shows it mid
+    // stroke. A bent fish projects shorter along its length with unchanged
+    // depth, so rest-pose measurements come out much thinner than what is on
+    // screen — which is why every silhouette figure disagreed with the
+    // screenshot the user traced.
+    const posed = new THREE.ShaderMaterial({
+      side: THREE.DoubleSide,
+      uniforms: built.uniforms,
+      vertexShader: /* glsl */ `
+        ${SWIM}
+        void main(){
+          vec3 p = swimBend(position);
+          gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(p, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        void main(){ gl_FragColor = vec4(1.0); }
+      `,
+    });
+    built.body.material = posed;
     built.body.geometry.clearGroups();
     silhouetteScene.add(built.body);
   }
