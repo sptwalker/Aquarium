@@ -58,94 +58,116 @@ const PROFILE_GOLDFISH: Profile = [
 ];
 
 /**
- * Koi / common carp — GENERATED from the reference line drawing.
+ * Koi / common carp — GENERATED from two reference views.
  *
- * These two tables are not hand-tuned. `tools/lineart-trace.mjs` decodes the
- * drawing, fuses the fin hatching into solid ink so the fins drop out of the
- * body region, flood-fills the background and takes the largest enclosed white
- * area as the body. `tools/lineart-profile.mjs` then resamples that silhouette
- * into the two curves below: half-depth along the axis, and how far the
- * centreline drifts above/below mid-body.
+ *   tools/trace-ref.mjs   traces a drawing into per-column ink extents
+ *   tools/koi-tables.mjs  resamples both traces into the three tables below
  *
- * Previous versions hand-fit a radius curve and then adjusted an offset on top
- * of it. That double-parameterisation is why the silhouette could never be made
- * to agree with the drawing: the offset had no counterpart in the reference, so
- * every fix to the head broke the flank. Measuring both curves separately
- * removes the freedom that was being misused.
+ * PROFILE is half-DEPTH from the side view, WIDTH is half-WIDTH from the plan
+ * view, AXIS is the centreline drift. All are normalised to the body's own
+ * maximum, so the mesh scales them by `style.depth` / `style.width` / `L`.
  *
- * Units: PROFILE is half-depth / max half-depth; AXIS is the centreline drift
- * in units of max half-depth.
+ * The two drawings are not scale-consistent: measured independently, the plan
+ * view comes out as wide as the side view is deep (width/depth = 1.02), which
+ * no carp is. They are AI reference art, not an orthographic set. So WIDTH is
+ * used for its SHAPE only — how the body tapers in plan, wide through the head
+ * and pinching at the peduncle — while its absolute scale is set from anatomy
+ * (see style.width below). PROFILE is trusted absolutely, since the side view
+ * is the view the user is comparing against.
  */
 const PROFILE_KOI: Profile = [
-  // The very last station is a small round-over, not the measured value. The
-  // drawing's t=0 column is where the body meets the caudal fin, and the body
-  // is closed there by a flat cap; at the peduncle's full 0.36 half-depth that
-  // cap reads as a cylinder plugged into the tail. Closing it to a small radius
-  // tucks the cap inside the fin root, where it cannot be seen. Everything from
-  // t=0.04 on is measured.
-  [0.000, 0.085],
-  [0.014, 0.190],
-  [0.040, 0.330],
-  [0.080, 0.386],
-  [0.120, 0.438],
-  [0.160, 0.495],
-  [0.200, 0.594],
-  [0.250, 0.720],
-  [0.300, 0.810],
-  [0.350, 0.884],
-  [0.400, 0.938],
-  [0.450, 0.979],
-  [0.500, 1.000],   // deepest point, mid-body
-  [0.550, 0.990],
-  [0.600, 0.923],
-  [0.650, 0.856],
-  [0.700, 0.829],
-  [0.750, 0.758],
-  [0.790, 0.691],
-  [0.830, 0.639],
-  [0.860, 0.593],
-  [0.890, 0.543],
-  [0.915, 0.497],
-  // ---- muzzle: the trace's own values, not the smoothed ones. Smoothing a
-  // series that ends in a point flattens the point, and the mouth/barbel
-  // strokes make the last columns noisy, so the smoothed table still held 0.19
-  // half-depths at the tip — a blunt nose instead of the drawing's fine taper.
-  [0.940, 0.340],
-  [0.950, 0.293],
-  [0.965, 0.220],
-  [0.975, 0.163],
-  [0.988, 0.100],
-  [1.000, 0.018],
+  [0.000, 0.059],
+  [0.040, 0.430],
+  [0.080, 0.427],
+  [0.120, 0.435],
+  [0.160, 0.496],
+  [0.200, 0.595],
+  [0.250, 0.718],
+  [0.300, 0.809],
+  [0.350, 0.882],
+  [0.400, 0.939],
+  [0.450, 0.980],
+  [0.500, 0.999],
+  [0.550, 0.988],
+  [0.600, 0.922],
+  [0.650, 0.842],
+  [0.700, 0.845],
+  [0.750, 0.783],
+  [0.790, 0.673],
+  [0.830, 0.619],
+  [0.860, 0.592],
+  [0.890, 0.537],
+  [0.915, 0.459],
+  [0.940, 0.353],
+  [0.955, 0.285],
+  [0.970, 0.213],
+  [0.985, 0.135],
+  [1.000, 0.059],
+];
+
+/**
+ * Plan-view half-width. The head is nearly as wide as the body — that is what
+ * gives the muzzle its blunt, broad front, and it is the quantity a single
+ * `width` constant could never express.
+ */
+const WIDTH_KOI: Profile = [
+  [0.000, 0.089],
+  [0.040, 0.423],
+  [0.080, 0.430],
+  [0.120, 0.456],
+  [0.160, 0.521],
+  [0.200, 0.610],
+  [0.250, 0.717],
+  [0.300, 0.807],
+  [0.350, 0.881],
+  [0.400, 0.937],
+  [0.450, 0.976],
+  [0.500, 0.996],
+  [0.550, 0.999],
+  [0.600, 0.977],
+  [0.650, 0.902],
+  [0.700, 0.842],
+  [0.750, 0.821],
+  [0.790, 0.750],
+  [0.830, 0.665],
+  [0.860, 0.537],
+  [0.890, 0.470],
+  [0.915, 0.473],
+  [0.940, 0.468],
+  [0.955, 0.445],
+  [0.970, 0.393],
+  [0.985, 0.291],
+  [1.000, 0.110],
 ];
 
 const AXIS_KOI: Profile = [
-  [0.000, -0.038],
-  [0.040, -0.046],
-  [0.080, -0.062],
-  [0.120, -0.074],
-  [0.160, -0.098],
-  [0.200, -0.117],
-  [0.250, -0.120],
-  [0.300, -0.098],
-  [0.350, -0.074],
-  [0.400, -0.053],
-  [0.450, -0.029],
-  [0.500, -0.008],
-  [0.550, 0.013],
-  [0.600, 0.077],
-  [0.650, 0.127],
-  [0.700, 0.112],
-  [0.750, 0.113],
-  [0.790, 0.103],
-  [0.830, 0.063],
-  [0.860, 0.030],
-  [0.890, -0.002],
-  [0.915, 0.001],
-  [0.940, 0.045],
-  [0.960, 0.088],
-  [0.976, 0.117],
-  [0.990, 0.127],
-  [1.000, 0.134],
+  [0.000, 0.040],
+  [0.040, -0.035],
+  [0.080, -0.039],
+  [0.120, -0.063],
+  [0.160, -0.089],
+  [0.200, -0.106],
+  [0.250, -0.107],
+  [0.300, -0.086],
+  [0.350, -0.063],
+  [0.400, -0.042],
+  [0.450, -0.021],
+  [0.500, 0.000],
+  [0.550, 0.030],
+  [0.600, 0.092],
+  [0.650, 0.151],
+  [0.700, 0.105],
+  [0.750, 0.098],
+  [0.790, 0.133],
+  [0.830, 0.093],
+  [0.860, 0.043],
+  [0.890, 0.017],
+  [0.915, 0.026],
+  [0.940, 0.058],
+  [0.955, 0.080],
+  [0.970, 0.096],
+  [0.985, 0.111],
+  [1.000, 0.124],
 ];
 
 const STYLES: Record<FishSpecies, FishStyle> = {
@@ -353,24 +375,25 @@ function bodySurface(style: FishStyle, t: number, angle: number): THREE.Vector3 
     );
   }
 
+  // ---- width along the body.
+  //
+  // This used to be a single constant (`style.width`) multiplied into every
+  // cross-section. That is why the plan view was wrong in a way no side-view
+  // measurement could catch: a real fish's width profile is not a scaled copy of
+  // its depth profile. The head stays broad, the peduncle pinches hard.
+  // WIDTH_KOI is the measured plan view.
+  const widthMul = style.koi > 0.5
+    ? smoothProfile(WIDTH_KOI, t)
+    : 1;
+
   // ---- the snout is a BLADE, not a point.
   //
-  // The profile describes the SIDE silhouette, and in side view the snout does
-  // taper to a point. But applying that taper to the WIDTH as well collapses the
-  // tip to a single point in every direction, leaving no frontal face — which
-  // is why the mouth kept rendering as a dot no matter how it was drawn.
-  //
-  // A carp's muzzle is thin top-to-bottom and still wide left-to-right: two
-  // lips meeting along a horizontal slot. So y follows the profile, while x is
-  // held at a minimum over the last stretch. The floor is in profile units:
-  // 0.25 of the max radius is half the drawing's mouth width (about 5% of body
-  // length end to end), which is what the front face has to span.
-  //
-  // This does not affect the side silhouette at all — y is untouched — so the
-  // outline comparison stays valid.
+  // The depth profile converges on the drawing's point. Width must not follow
+  // it there: a carp's muzzle is thin top-to-bottom and still broad left to
+  // right, with the two lips meeting along a horizontal slot. Without a floor
+  // the tip collapses to a speck and there is no frontal face for a mouth.
   const blade = THREE.MathUtils.smoothstep(t, 0.930, 1.0);
-  const floor = 0.25;
-  const rX = Math.max(r, floor * blade);
+  const rX = Math.max(r * widthMul, 0.30 * blade);
 
   return new THREE.Vector3(
     Math.cos(angle) * rX * style.width * L,

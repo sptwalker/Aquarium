@@ -23,6 +23,9 @@ const silhouetteMode = new URLSearchParams(location.search).has('silhouette');
 // judging the whole animal — and the dorsal, pectoral and pelvic fins add a
 // great deal of apparent bulk. Both views are needed.
 const silhouetteAll = new URLSearchParams(location.search).get('silhouette') === 'all';
+// `silhouette=top` looks straight down instead of from the side, so the plan
+// view can be checked against the top-down reference drawing.
+const silhouetteTop = new URLSearchParams(location.search).get('silhouette') === 'top';
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
@@ -89,12 +92,30 @@ if (silhouetteMode) {
   // The fish's long axis is LOCAL Z (z = (t-0.5)*L), and the camera looks down
   // x, so screen-horizontal maps to z. Framing off bs.x (the body's *thickness*)
   // made the box far narrower than the fish and clipped both ends flat.
-  const halfW = bs.z * 0.56;
+  // Frame the LONG axis, whichever way it runs on screen. In the side view the
+  // body's length (local z) is screen-horizontal; in the plan view it is
+  // screen-vertical. Deriving the half-height from bs.z in *both* cases clipped
+  // the plan view's head and tail off the top and bottom.
   const aspect = window.innerWidth / window.innerHeight;
-  const halfH = halfW / aspect;
+  const long = bs.z;
+  let halfW: number, halfH: number;
+  if (silhouetteTop) {
+    halfH = long * 0.56;
+    halfW = halfH * aspect;
+  } else {
+    halfW = long * 0.56;
+    halfH = halfW / aspect;
+  }
   ortho = new THREE.OrthographicCamera(-halfW, halfW, halfH, -halfH, 0.01, 200);
-  ortho.position.set(bc.x + 50, bc.y, bc.z);
-  ortho.up.set(0, 1, 0);
+  if (silhouetteTop) {
+    // plan view: look straight down the body's y, with the long axis across
+    // the screen, so this lines up with the top-down reference drawing
+    ortho.position.set(bc.x, bc.y + 50, bc.z);
+    ortho.up.set(0, 0, -1);
+  } else {
+    ortho.position.set(bc.x + 50, bc.y, bc.z);
+    ortho.up.set(0, 1, 0);
+  }
   ortho.lookAt(bc.x, bc.y, bc.z);
 
   // flat fill, no lighting at all: this is a mask, not a render
