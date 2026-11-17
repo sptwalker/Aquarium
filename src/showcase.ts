@@ -8,7 +8,24 @@ import { FullPass } from './post';
 const canvas = document.getElementById('view') as HTMLCanvasElement;
 const toggle = document.getElementById('toggle') as HTMLButtonElement;
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+// ---- silhouette mode
+//
+// `?silhouette=1` renders the body mesh alone, flat white on black, through an
+// orthographic side camera with no post-processing. Nothing else can be used to
+// judge the outline: a perspective camera foreshortens by depth, the shading
+// hides where the surface actually ends, and the fins extend the silhouette
+// past the body. This mode exists so tools/silhouette.mjs can compare the exact
+// rendered shape against the reference line art, pixel for pixel, instead of
+// anyone eying a screenshot.
+const silhouetteMode = new URLSearchParams(location.search).has('silhouette');
+
+const renderer = new THREE.WebGLRenderer({
+  canvas,
+  antialias: true,
+  powerPreference: 'high-performance',
+  // only needed so the silhouette harness can read the framebuffer back
+  preserveDrawingBuffer: silhouetteMode,
+});
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight, false);
 renderer.toneMapping = THREE.NoToneMapping;
@@ -31,8 +48,15 @@ const style = STYLES[species] ?? STYLES.oranda;
 const built = makeFish(style, shared);
 scene.add(built.group);
 
-// ---- framing: fit the fish from its own bounds, so all four species read at
-// the same size regardless of their length
+// ---- silhouette mode
+//
+// `?silhouette=1` renders the body mesh alone, flat white on black, through an
+// orthographic side camera with no post-processing. Nothing else can be used to
+// judge the outline: a perspective camera foreshortens by depth, the shading
+// hides where the surface actually ends, and the fins extend the silhouette
+// past the body. This mode exists so tools/silhouette.mjs can compare the exact
+// rendered shape against the reference line art, pixel for pixel, instead of
+// anyone eying a screenshot.
 const bounds = new THREE.Box3().setFromObject(built.group);
 const size = bounds.getSize(new THREE.Vector3());
 const centre = bounds.getCenter(new THREE.Vector3());
@@ -48,6 +72,34 @@ controls.maxDistance = radius * 6.0;
 controls.target.set(0, 0, 0);
 camera.position.set(radius * 1.35, radius * 0.35, radius * 1.25);
 controls.update();
+
+// ---- silhouette rig: replace the perspective camera with a true orthographic
+// side view of the body alone.
+let ortho: THREE.OrthographicCamera | null = null;
+let silhouetteScene: THREE.Scene | null = null;
+if (silhouetteMode) {
+  const bodyBox = new THREE.Box3().setFromObject(built.body);
+  const bs = bodyBox.getSize(new THREE.Vector3());
+  const bc = bodyBox.getCenter(new THREE.Vector3());
+  const halfH = bs.y * 0.75;
+  const aspect = window.innerWidth / window.innerHeight;
+  ortho = new THREE.OrthographicCamera(-halfH * aspect, halfH * aspect, halfH, -halfH, 0.01, 100);
+  // straight-on side view, +x looking toward -x
+  ortho.position.set(bc.x + 20, bc.y, bc.z);
+  ortho.up.set(0, 1, 0);
+  ortho.lookAt(bc.x, bc.y, bc.z);
+
+  // flat fill, no lighting at all: this is a mask, not a render
+  const silhouetteMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  built.body.material = silhouetteMat;
+  built.body.geometry.clearGroups();
+  silhouetteScene = new THREE.Scene();
+  silhouetteScene.background = new THREE.Color(0, 0, 0);
+  silhouetteScene.add(built.body);
+  built.body.position.set(0, 0, 0);
+  // undo the earlier recentring, which moved the group not the mesh
+  ortho.position.set(20, bc.y, bc.z);
+}
 
 // ---- composite: ACES + gamma + a soft studio vignette
 const composite = new FullPass(
@@ -137,12 +189,18 @@ function frame() {
 
   controls.update();
 
-  renderer.setRenderTarget(sceneRT);
+  renderer.setRenderTarget(null);
   renderer.clear();
-  renderer.render(scene, camera);
+  if (silhouetteMode && ortho && silhouetteScene) {
+    renderer.render(silhouetteScene, ortho);
+  } else {
+    renderer.setRenderTarget(sceneRT);
+    renderer.clear();
+    renderer.render(scene, camera);
 
-  composite.u.tSrc.value = sceneRT.texture;
-  composite.render(renderer, null);
+    composite.u.tSrc.value = sceneRT.texture;
+    composite.render(renderer, null);
+  }
 }
 
 declare global {

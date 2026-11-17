@@ -104,13 +104,18 @@ const PROFILE_KOI: Profile = [
   [0.790, 0.691],
   [0.830, 0.639],
   [0.860, 0.593],
-  [0.890, 0.545],
-  [0.915, 0.473],
-  [0.940, 0.373],
-  [0.960, 0.288],
-  [0.976, 0.222],
-  [0.990, 0.203],
-  [1.000, 0.189],
+  [0.890, 0.543],
+  [0.915, 0.497],
+  // ---- muzzle: the trace's own values, not the smoothed ones. Smoothing a
+  // series that ends in a point flattens the point, and the mouth/barbel
+  // strokes make the last columns noisy, so the smoothed table still held 0.19
+  // half-depths at the tip — a blunt nose instead of the drawing's fine taper.
+  [0.940, 0.340],
+  [0.950, 0.293],
+  [0.965, 0.220],
+  [0.975, 0.163],
+  [0.988, 0.100],
+  [1.000, 0.018],
 ];
 
 const AXIS_KOI: Profile = [
@@ -316,20 +321,25 @@ function bodySurface(style: FishStyle, t: number, angle: number): THREE.Vector3 
   //
   // Painting a plate and a slit onto the skin only ever produced a shading
   // gradient: from any angle the flank stayed smooth, so the gills simply were
-  // not there. A real plate needs a real silhouette, and the cheapest way to
-  // get one without floating a separate mesh over a curved surface is to
-  // displace the shared surface — then `bodyNormal` derives the right normals
-  // and the edge catches light exactly like a physical lip of skin.
+  // not there. A real plate needs a real silhouette, so the shared surface is
+  // displaced — `bodyNormal` then derives the right normals and the edge
+  // catches light like a physical fold of skin.
   //
-  // Two features: a broad outward swell over the cover plate, and a narrow
-  // inward groove at its rear edge (the gill opening). Both are gated on the
-  // flank so they vanish at the dorsal ridge and the belly.
+  // The previous version had a 0.030L inward groove behind the plate to read as
+  // the gill opening. At that depth it is not a gill, it is a trench cut across
+  // the body — the "deep groove" that was reported. The opening is now a narrow
+  // V that only bites 0.006L, and most of the read comes from the plate's
+  // raised rear lip instead.
   const flankW = Math.pow(Math.abs(Math.cos(angle)), 1.6);
   if (flankW > 0.02) {
-    const plate = THREE.MathUtils.smoothstep(t, 0.748, 0.782)
-                * (1 - THREE.MathUtils.smoothstep(t, 0.800, 0.845));
-    const groove = Math.exp(-Math.pow((t - 0.742) / 0.0095, 2));
-    const out = (plate * 0.011 - groove * 0.030) * L * flankW;
+    // plate: a broad, gentle swell over the cover, strongest at its rear
+    const plate = THREE.MathUtils.smoothstep(t, 0.760, 0.790)
+                * (1 - THREE.MathUtils.smoothstep(t, 0.806, 0.868));
+    // the free rear edge of the plate, lifted so it casts its own shadow line
+    const lip = Math.exp(-Math.pow((t - 0.800) / 0.011, 2));
+    // the opening itself: a narrow V behind the lip
+    const groove = Math.exp(-Math.pow((t - 0.7802) / 0.0045, 2));
+    const out = (plate * 0.009 + lip * 0.007 - groove * 0.006) * L * flankW;
     const ca = Math.cos(angle), sa = Math.sin(angle);
     return new THREE.Vector3(
       ca * r * style.width * L + ca * out,
@@ -338,8 +348,27 @@ function bodySurface(style: FishStyle, t: number, angle: number): THREE.Vector3 
     );
   }
 
+  // ---- the snout is a BLADE, not a point.
+  //
+  // The profile describes the SIDE silhouette, and in side view the snout does
+  // taper to a point. But applying that taper to the WIDTH as well collapses the
+  // tip to a single point in every direction, leaving no frontal face — which
+  // is why the mouth kept rendering as a dot no matter how it was drawn.
+  //
+  // A carp's muzzle is thin top-to-bottom and still wide left-to-right: two
+  // lips meeting along a horizontal slot. So y follows the profile, while x is
+  // held at a minimum over the last stretch. The floor is in profile units:
+  // 0.25 of the max radius is half the drawing's mouth width (about 5% of body
+  // length end to end), which is what the front face has to span.
+  //
+  // This does not affect the side silhouette at all — y is untouched — so the
+  // outline comparison stays valid.
+  const blade = THREE.MathUtils.smoothstep(t, 0.930, 1.0);
+  const floor = 0.25;
+  const rX = Math.max(r, floor * blade);
+
   return new THREE.Vector3(
-    Math.cos(angle) * r * style.width * L,
+    Math.cos(angle) * rX * style.width * L,
     cy + Math.sin(angle) * r * style.depth * L * squashY,
     z,
   );
@@ -674,9 +703,12 @@ export function makeFish(style: FishStyle, shared: Shared): {
     // the muzzle droops and an absolute y put the cleft on the cheek
     uTipY: { value: bodySurface(style, 1.0, 0).y },
     uTipZ: { value: bodySurface(style, 1.0, 0).z },
-    // radius of the snout cap: everything about the mouth is scaled by this,
-    // because the cap is tiny and absolute units made the mouth far too big
-    uTipRadius: { value: Math.max(1e-3, smoothProfile(style.profile, 1.0) * style.width * style.length) },
+    // Reference radius for the painted mouth. This must NOT be the radius at
+    // t=1: the profile now closes to a point there (0.018), so the mouth's
+    // inner test collapsed into a dot and the cleft rendered as a vertical
+    // pinhole. The muzzle's width just behind the tip is what the mouth is
+    // actually sized against.
+    uTipRadius: { value: Math.max(1e-3, smoothProfile(style.profile, 0.945) * style.width * style.length) },
   };
 
   // ---- body
@@ -829,46 +861,34 @@ export function makeFish(style: FishStyle, shared: Shared): {
           col *= mix(0.975, 1.012, th * scaleZone + (1.0 - scaleZone));
         }
 
-        // ---- mouth, painted on the muzzle.
+        // ---- mouth cleft: the dark inside of the notch cut in bodySurface().
         //
-        // Sizing this in absolute units was the whole bug: the mouth ellipse
-        // was ~5x the radius of the snout tip, so its "inside" test wrapped
-        // around the whole cap and appeared on both cheeks. Everything here is
-        // measured in units of the tip radius, and gated on being near the
-        // front face in z.
+        // The notch itself is geometry (see the mouth block there); all this
+        // does is darken the skin inside it so it reads as an opening rather
+        // than a dent. Sizing is relative to the MUZZLE width just behind the
+        // tip, not the tip radius — the profile closes to a point now, and
+        // scaling by that made the mouth a pinhole.
         {
-          float tipR = max(0.001, uTipRadius);
-          float dx = lp.x / tipR;
-          float dy = (lp.y - uTipY) / tipR;
-          float dz = (uTipZ - lp.z) / tipR;
+          float R = max(0.001, uTipRadius);
+          float mx = lp.x / R;
+          float my = (lp.y - uTipY) / R;
+          float nearTip = smoothstep(0.90, 0.955, along);
 
-          // only the forward-facing cap
-          float front = smoothstep(1.10, 0.25, abs(dz));
+          float halfW = 0.92;
+          float halfH = 0.055 + uMouth * 0.30;
+          float open = smoothstep(halfW, halfW * 0.80, abs(mx))
+                     * smoothstep(halfH, halfH * 0.55, abs(my))
+                     * nearTip;
 
-          // horizontal cleft, wide across, thin vertically, parts with uMouth
-          float halfW = 0.80;
-          float halfH = 0.085 + uMouth * 0.55;
-          float open = smoothstep(halfW, halfW * 0.86, abs(dx))
-                     * smoothstep(halfH, halfH * 0.80, abs(dy))
-                     * front;
+          // lips: a soft pale roll on each side of the cleft
+          float lipY = abs(my) - (halfH + 0.10);
+          float lip = smoothstep(0.12, 0.02, abs(lipY))
+                    * smoothstep(halfW * 1.06, halfW * 0.75, abs(mx)) * nearTip;
+          col = mix(col, col * 1.10 + vec3(0.03, 0.02, 0.01), lip * 0.35);
 
-          // Upper lip: a fat roll above the cleft; lower jaw set slightly back.
-          float lipY = dy - (halfH + 0.16);
-          float upperLip = smoothstep(halfW * 1.05, halfW * 0.70, abs(dx))
-                         * smoothstep(0.15, 0.0, abs(lipY)) * step(lipY, 0.0)
-                         * front;
-          float lipY2 = dy + (halfH + 0.20);
-          float lowerJaw = smoothstep(halfW * 0.92, halfW * 0.60, abs(dx))
-                         * smoothstep(0.13, 0.0, abs(lipY2)) * step(0.0, lipY2)
-                         * front;
-
-          col = mix(col, col * 0.82, upperLip * 0.45);
-          col = mix(col, col * 0.90, lowerJaw * 0.28);
-
-          // wet throat: darkest at the centre of the slit
-          float depth = smoothstep(1.0, 0.05, length(vec2(dx / halfW, dy / max(0.02, halfH))));
-          col = mix(col, mix(vec3(0.060, 0.020, 0.014), vec3(0.006, 0.002, 0.001), depth),
-                    open * 0.97);
+          float depth = smoothstep(1.0, 0.0, length(vec2(mx / halfW, my / max(0.02, halfH))));
+          col = mix(col, mix(vec3(0.075, 0.028, 0.020), vec3(0.008, 0.003, 0.002), depth),
+                    open * 0.96);
         }
 
         // ---- operculum (gill cover).
