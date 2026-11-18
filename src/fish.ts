@@ -76,10 +76,24 @@ const PROFILE_GOLDFISH: Profile = [
  * is the view the user is comparing against.
  */
 const PROFILE_KOI: Profile = [
-  [0.000, 0.059],
-  [0.040, 0.430],
-  [0.080, 0.427],
-  [0.120, 0.435],
+  // The trailing stations are NOT the raw trace values.
+  //
+  // The trace of the drawing bulges between u≈0.045 and u≈0.13 (raw half-depth
+  // climbing 0.367 → 0.389 → 0.438) before falling to the tip. That bulge is
+  // where the caudal fin's rays converge and the body's outline is interrupted
+  // by the fin root — an artefact of separating fin from body, not a shape.
+  // Reproducing it verbatim put a visible swelling on the peduncle: the body
+  // narrows, swells again, then necks down at the very end.
+  //
+  // A carp's peduncle tapers monotonically into the caudal fin. These stations
+  // are that taper, scaled so the body still meets the drawing's silhouette
+  // either side of the artefact.
+  [0.000, 0.075],
+  [0.020, 0.235],
+  [0.040, 0.330],
+  [0.070, 0.392],
+  [0.100, 0.424],
+  [0.120, 0.446],
   [0.160, 0.496],
   [0.200, 0.595],
   [0.250, 0.718],
@@ -341,32 +355,29 @@ function bodySurface(style: FishStyle, t: number, angle: number): THREE.Vector3 
 
   // ---- operculum (gill cover), as GEOMETRY.
   //
-  // Painting a plate and a slit onto the skin only ever produced a shading
-  // gradient: from any angle the flank stayed smooth, so the gills simply were
-  // not there. A real plate needs a real silhouette, so the shared surface is
-  // displaced — `bodyNormal` then derives the right normals and the edge
-  // catches light like a physical fold of skin.
+  // A real plate needs a real silhouette, so the shared surface is displaced and
+  // `bodyNormal` derives the right normals from it.
   //
-  // The previous version had a 0.030L inward groove behind the plate to read as
-  // the gill opening. At that depth it is not a gill, it is a trench cut across
-  // the body — the "deep groove" that was reported. The opening is now a narrow
-  // V that only bites 0.006L, and most of the read comes from the plate's
-  // raised rear lip instead.
+  // The displacement has to be GENTLE. An earlier version packed a 0.016L rise,
+  // a 0.010L lip and a 0.011L groove into about 0.02 of t — a slope near 60
+  // degrees. The surface normal swings through that, and the result is two hard
+  // creases running down the cheek: exactly the "two deep marks on the front of
+  // the body" that was reported. Here the same relief is spread over roughly
+  // three times the arc at half the amplitude, so the normals turn smoothly.
+  //
+  // The gill opening still reads because the body shader darkens a narrow line
+  // at the same ordinate — the geometry only has to supply the soft step.
   const flankW = Math.pow(Math.abs(Math.cos(angle)), 1.6);
   if (flankW > 0.02) {
     // Ordinates are ordered so the free rear edge (the gill opening) is the
-    // LOW end, i.e. toward the tail, and the plate sweeps forward from it.
-    // Getting the order backwards put the groove in front of the lip and the
-    // painted gill line at a different t than the raised plate — which is why
-    // the cover never lined up with its own edge.
+    // LOW end, and the plate sweeps forward from it.
     const OPEN = 0.782;          // gill opening: the rear, free edge
-    const plate = THREE.MathUtils.smoothstep(t, OPEN + 0.004, OPEN + 0.018)
-                * (1 - THREE.MathUtils.smoothstep(t, 0.845, 0.900));
-    // the rolled rear lip of the cover, just ahead of the opening
-    const lip = Math.exp(-Math.pow((t - (OPEN + 0.014)) / 0.0085, 2));
-    // the opening itself: a narrow, shallow V
-    const groove = Math.exp(-Math.pow((t - OPEN) / 0.006, 2));
-    const out = (plate * 0.016 + lip * 0.010 - groove * 0.011) * L * flankW;
+    const plate = THREE.MathUtils.smoothstep(t, OPEN - 0.010, OPEN + 0.070)
+                * (1 - THREE.MathUtils.smoothstep(t, 0.850, 0.920));
+    // the opening itself: a shallow, wide hollow behind the lip
+    const groove = THREE.MathUtils.smoothstep(t, OPEN - 0.055, OPEN - 0.004)
+                 * (1 - THREE.MathUtils.smoothstep(t, OPEN + 0.004, OPEN + 0.030));
+    const out = (plate * 0.011 - groove * 0.005) * L * flankW;
     const ca = Math.cos(angle), sa = Math.sin(angle);
     return new THREE.Vector3(
       ca * r * style.width * L + ca * out,
