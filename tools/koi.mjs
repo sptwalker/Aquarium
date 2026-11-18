@@ -23,7 +23,7 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 
-await page.goto(`${base}/showcase.html?species=koi`, { waitUntil: 'networkidle0', timeout: 60000 });
+await page.goto(`${base}/showcase.html?species=koi`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await page.waitForFunction('window.__ready === true', { timeout: 60000 });
 await new Promise((r) => setTimeout(r, 1200));
 await page.evaluate(() => window.__showcase.setPlaying(false));

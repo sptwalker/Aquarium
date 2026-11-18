@@ -355,29 +355,19 @@ function bodySurface(style: FishStyle, t: number, angle: number): THREE.Vector3 
 
   // ---- operculum (gill cover), as GEOMETRY.
   //
-  // A real plate needs a real silhouette, so the shared surface is displaced and
-  // `bodyNormal` derives the right normals from it.
+  // A single Gaussian swell, deliberately. Every earlier version built the plate
+  // from overlapping smoothsteps — rise here, lip there, groove behind — and each
+  // junction between two of them left a curvature break. `bodyNormal()` is a
+  // finite difference, so a curvature break becomes a visible band running from
+  // back to belly. Two such junctions is exactly the "two deep marks on the
+  // front of the body".
   //
-  // The displacement has to be GENTLE. An earlier version packed a 0.016L rise,
-  // a 0.010L lip and a 0.011L groove into about 0.02 of t — a slope near 60
-  // degrees. The surface normal swings through that, and the result is two hard
-  // creases running down the cheek: exactly the "two deep marks on the front of
-  // the body" that was reported. Here the same relief is spread over roughly
-  // three times the arc at half the amplitude, so the normals turn smoothly.
-  //
-  // The gill opening still reads because the body shader darkens a narrow line
-  // at the same ordinate — the geometry only has to supply the soft step.
+  // A Gaussian has no junctions: smooth from end to end, and it decays to nothing
+  // on its own, so there is no second boundary to hide. The gill *line* is drawn
+  // by the body shader, which needs no geometry at all.
   const flankW = Math.pow(Math.abs(Math.cos(angle)), 1.6);
   if (flankW > 0.02) {
-    // Ordinates are ordered so the free rear edge (the gill opening) is the
-    // LOW end, and the plate sweeps forward from it.
-    const OPEN = 0.782;          // gill opening: the rear, free edge
-    const plate = THREE.MathUtils.smoothstep(t, OPEN - 0.010, OPEN + 0.070)
-                * (1 - THREE.MathUtils.smoothstep(t, 0.850, 0.920));
-    // the opening itself: a shallow, wide hollow behind the lip
-    const groove = THREE.MathUtils.smoothstep(t, OPEN - 0.055, OPEN - 0.004)
-                 * (1 - THREE.MathUtils.smoothstep(t, OPEN + 0.004, OPEN + 0.030));
-    const out = (plate * 0.011 - groove * 0.005) * L * flankW;
+    const out = Math.exp(-Math.pow((t - 0.838) / 0.062, 2)) * 0.010 * L * flankW;
     const ca = Math.cos(angle), sa = Math.sin(angle);
     return new THREE.Vector3(
       ca * r * style.width * L + ca * out,
@@ -689,21 +679,32 @@ function buildFin(
 
 function buildTailCloth(style: FishStyle): FinCloth {
   const L = style.length;
-  const cols = 26;
-  const rows = 16;
+  // Resolution matters here: the caudal fin is the largest high-contrast edge in
+  // the frame, and at 26 columns each quad was about 8 px across, so its
+  // trailing edge rendered as a staircase. The cloth cost is one more row of
+  // spring constraints, which is negligible.
+  const cols = 46;
+  const rows = 26;
   const span = L * (style.width < 0.11 ? 0.34 : 0.26);
   const rest = new Float32Array(cols * rows * 3);
 
   for (let i = 0; i < cols; i++) {
     const u = i / (cols - 1);
     const s = u * 2 - 1;
+    const as = Math.abs(s);
     for (let j = 0; j < rows; j++) {
       const d = j / (rows - 1);
-      // fork: the middle of the fan is shallower than the lobes
-      const notch = 1 - 0.34 * Math.exp(-s * s * 6.5);
+      // Fork: the middle of the fan is much shallower than the lobes. This is
+      // what makes a carp tail forked rather than triangular.
+      const notch = 1 - 0.62 * Math.exp(-s * s * 3.2);
+      // Lobe outline. It must stay near full depth across most of the lobe and
+      // only converge at the very outer edge, with a continuous slope there —
+      // a high power of |s| pulls the last few columns in sharply and leaves a
+      // clipped corner, which is the stair-step that was showing at the tip.
+      const tip = Math.pow(Math.max(0, 1 - Math.pow(as, 3)), 0.42);
       const z = -L * 0.5 + L * 0.04 - d * span * notch;
-      const y = s * Math.pow(d, 0.80) * L * 0.20 * (1 + 0.12 * Math.sin(Math.abs(s) * 2.4));
-      const x = s * d * L * 0.070 + d * d * Math.cos(s * 1.9) * L * 0.040;
+      const y = s * Math.pow(d, 0.88) * L * 0.235 * tip;
+      const x = s * d * L * 0.070 * tip + d * d * Math.cos(s * 1.9) * L * 0.040;
       const o = (i * rows + j) * 3;
       rest[o] = x;
       rest[o + 1] = y;
@@ -1148,6 +1149,10 @@ export function makeFish(style: FishStyle, shared: Shared): {
   });
   const tailMesh = new THREE.Mesh(tail.geometry, tailMat);
   tailMesh.frustumCulled = false;
+  // Tag it, so debug probes and tools never have to guess which child is the
+  // caudal cloth — or, worse, match it by vertex count, which silently breaks
+  // the moment the mesh resolution changes.
+  tailMesh.name = 'caudal';
   group.add(tailMesh);
 
   // dorsal, anal, and a pectoral pair

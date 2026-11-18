@@ -28,7 +28,7 @@ export async function captureSilhouette(base, species, { width = 1400, height = 
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 
   await page.goto(`${base}/showcase.html?species=${species}&silhouette=${all ? 'all' : (view === 'top' ? 'top' : '1')}`, {
-    waitUntil: 'networkidle0', timeout: 60000,
+    waitUntil: 'domcontentloaded', timeout: 60000,
   });
   await page.waitForFunction('window.__ready === true', { timeout: 60000 });
 

@@ -16,7 +16,7 @@ const browser = await puppeteer.launch({
 });
 const page = await browser.newPage();
 page.on('pageerror', (e) => console.log('ERR', e.message));
-await page.goto(url, { waitUntil: 'networkidle0', timeout: 60000 });
+await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await page.waitForFunction('window.__probe !== undefined', { timeout: 60000 });
 
 const rows = [];

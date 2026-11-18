@@ -39,7 +39,7 @@ page.on('console', (m) => {
 });
 page.on('pageerror', (e) => errors.push(`[pageerror] ${e.message}`));
 
-await page.goto(url, { waitUntil: 'networkidle0', timeout: 60000 });
+await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await page.waitForFunction('window.__ready === true', { timeout: 60000 }).catch(() => {});
 await new Promise((r) => setTimeout(r, waitMs));
 await page.screenshot({ path: out });

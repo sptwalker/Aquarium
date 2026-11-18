@@ -387,11 +387,14 @@ window.__quality = () => ({ ...QUALITY[quality], name: quality });
 window.__camera = { camera, controls };
 window.__tail = () => {
   const v = fishViews[0];
-  const g = (v.group.children.find((c) => c instanceof THREE.Mesh && (c.geometry as THREE.BufferGeometry).attributes.uv?.count === 26 * 16) as THREE.Mesh | undefined);
+  // Look the caudal fin up by name. It used to be matched by vertex count
+  // (26*16), which meant raising the cloth resolution silently turned this
+  // probe into a null-returning no-op and the tail test reported -Infinity.
+  const g = v.group.getObjectByName('caudal') as THREE.Mesh | undefined;
   if (!g) return null;
   const attr = g.geometry.attributes.position as THREE.BufferAttribute;
   const bb = new THREE.Box3().setFromBufferAttribute(attr);
-  const tip = new THREE.Vector3().fromBufferAttribute(attr, 25 * 16 + 15);
+  const tip = new THREE.Vector3().fromBufferAttribute(attr, attr.count - 1);
   return { min: bb.min.toArray().map((n) => +n.toFixed(3)), max: bb.max.toArray().map((n) => +n.toFixed(3)), tip: tip.toArray().map((n) => +n.toFixed(3)) };
 };
 document.addEventListener('visibilitychange', () => {

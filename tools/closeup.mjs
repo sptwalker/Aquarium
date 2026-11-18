@@ -29,7 +29,7 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 
-await page.goto(url, { waitUntil: 'networkidle0', timeout: 60000 });
+await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await page.waitForFunction('window.__camera !== undefined', { timeout: 60000 });
 
 // frame the largest fish, keeping the camera outside the glass
