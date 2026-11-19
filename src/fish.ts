@@ -697,13 +697,19 @@ function buildTailCloth(style: FishStyle): FinCloth {
       // Fork: the middle of the fan is much shallower than the lobes. This is
       // what makes a carp tail forked rather than triangular.
       const notch = 1 - 0.62 * Math.exp(-s * s * 3.2);
-      // Lobe outline. It must stay near full depth across most of the lobe and
-      // only converge at the very outer edge, with a continuous slope there —
-      // a high power of |s| pulls the last few columns in sharply and leaves a
-      // clipped corner, which is the stair-step that was showing at the tip.
-      const tip = Math.pow(Math.max(0, 1 - Math.pow(as, 3)), 0.42);
+      // Lobe outline.
+      //
+      // This must never reach ZERO at the outer column. When it did, the last
+      // two columns of the mesh collapsed onto the same line — same y, different
+      // z — so the membrane folded back on itself there and rendered as a black
+      // slit down the middle of the fin. Stopping at 0.16 keeps a real edge on
+      // the last column and the taper still reads as a point.
+      const tip = 0.16 + 0.84 * Math.pow(Math.max(0, 1 - Math.pow(as, 3)), 0.45);
       const z = -L * 0.5 + L * 0.04 - d * span * notch;
-      const y = s * Math.pow(d, 0.88) * L * 0.235 * tip;
+      // Scale the height back up to compensate for the floor: the lobe must
+      // still span the drawing's width, even though its outer column can no
+      // longer reach full depth.
+      const y = s * Math.pow(d, 0.88) * L * 0.278 * tip;
       const x = s * d * L * 0.070 * tip + d * d * Math.cos(s * 1.9) * L * 0.040;
       const o = (i * rows + j) * 3;
       rest[o] = x;

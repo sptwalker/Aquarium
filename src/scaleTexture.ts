@@ -62,10 +62,6 @@ function heightAt(u: number, v: number): number {
   for (let dy = -2; dy <= 2; dy++) {
     for (let dx = -2; dx <= 2; dx++) {
       const cellY = by + dy;
-      // lower rows lie on top; the tiny dx term makes the pick unambiguous
-      // between two scales that overlap by exactly the same amount
-      const prio = dy + dx * 0.02;
-      if (prio <= bestPrio) continue;
 
       const shift = ((cellY % 2) + 2) % 2 === 0 ? 0 : 0.5;
       const cx = bx + dx + 0.5 + shift;
@@ -75,6 +71,23 @@ function heightAt(u: number, v: number): number {
       const ddy = gv - cy;
       if (ddx > COLS * 0.5) ddx -= COLS;
       if (ddx < -COLS * 0.5) ddx += COLS;
+
+      // ---- which scale is on top here.
+      //
+      // Rows still win on dy: a lower row lies over the one behind it. But
+      // WITHIN a row the winner must be the scale whose centre is nearest, not
+      // "whichever has the larger dx". The old `dy + dx*0.02` always picked the
+      // right-hand neighbour of a pair, so the hand-over happened at that
+      // neighbour's left rim — where its own height is zero. The surface height
+      // therefore stepped from the left scale's crown straight down to nothing,
+      // once per column of the lattice: a dark seam running from back to belly,
+      // repeated around the body.
+      //
+      // Nearest-centre moves the hand-over to the midpoint between two scales,
+      // where by symmetry both have the same height. The field is continuous
+      // there, and the seam disappears.
+      const prio = dy * 10 - Math.abs(ddx);
+      if (prio <= bestPrio) continue;
 
       // Fan flares toward -v, i.e. toward the tail once this is laid on the
       // body (uv.y grows toward the snout). The scale is narrow where the row
