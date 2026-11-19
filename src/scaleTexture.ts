@@ -121,12 +121,50 @@ export function makeScaleMaps(): ScaleMaps {
   if (cached) return cached;
 
   // ---- height field
-  const height = new Float32Array(TILE * TILE);
+  const raw = new Float32Array(TILE * TILE);
   for (let y = 0; y < TILE; y++) {
     for (let x = 0; x < TILE; x++) {
-      height[y * TILE + x] = heightAt((x + 0.5) / TILE, (y + 0.5) / TILE);
+      raw[y * TILE + x] = heightAt((x + 0.5) / TILE, (y + 0.5) / TILE);
     }
   }
+
+  // ---- soften the field before differentiating it.
+  //
+  // The winner-take-all lattice is piecewise: wherever two scales hand over, the
+  // field steps from one crown toward the neighbour's rim, and because the scales
+  // overlap along u those hand-overs line up into continuous vertical trenches —
+  // the dark bands that kept appearing on the flank. Every attempt to fix this by
+  // reshaping the selection (nearest centre, smooth-max, zero-at-edge cells) just
+  // moved the step somewhere else; the discontinuity is inherent to "pick one
+  // scale per point".
+  //
+  // A separable 3-tap blur applied twice removes it by construction. The step is
+  // one or two pixels wide while a scale is ~64 px, so two passes cost almost
+  // nothing in shape — they turn a cliff into a ramp over ~4 px, and the normal
+  // map derived from it no longer has a face-on wall to shade black.
+  const blur = (src: Float32Array): Float32Array => {
+    const tmp = new Float32Array(TILE * TILE);
+    const out = new Float32Array(TILE * TILE);
+    const w = [0.25, 0.5, 0.25];
+    for (let y = 0; y < TILE; y++) {
+      for (let x = 0; x < TILE; x++) {
+        let s = 0;
+        for (let k = -1; k <= 1; k++) s += src[y * TILE + (((x + k) % TILE) + TILE) % TILE] * w[k + 1];
+        tmp[y * TILE + x] = s;
+      }
+    }
+    for (let y = 0; y < TILE; y++) {
+      for (let x = 0; x < TILE; x++) {
+        let s = 0;
+        for (let k = -1; k <= 1; k++) s += tmp[((((y + k) % TILE) + TILE) % TILE) * TILE + x] * w[k + 1];
+        out[y * TILE + x] = s;
+      }
+    }
+    return out;
+  };
+  // Wrap-around indexing matches the texture's own RepeatWrapping, so the blur
+  // does not disturb the seamless tiling.
+  let height = blur(blur(blur(raw)));
 
   const sample = (x: number, y: number) => {
     const xi = ((x % TILE) + TILE) % TILE;
@@ -138,7 +176,7 @@ export function makeScaleMaps(): ScaleMaps {
   const nCanvas = makeCanvas();
   const nCtx = nCanvas.getContext('2d')!;
   const nImg = nCtx.createImageData(TILE, TILE);
-  const strength = 6.0;
+  const strength = 2.2;
   for (let y = 0; y < TILE; y++) {
     for (let x = 0; x < TILE; x++) {
       const hL = sample(x - 1, y);

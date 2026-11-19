@@ -82,19 +82,22 @@ const PROFILE_KOI: Profile = [
   // climbing 0.367 → 0.389 → 0.438) before falling to the tip. That bulge is
   // where the caudal fin's rays converge and the body's outline is interrupted
   // by the fin root — an artefact of separating fin from body, not a shape.
-  // Reproducing it verbatim put a visible swelling on the peduncle: the body
-  // narrows, swells again, then necks down at the very end.
+  // Reproducing it verbatim put a swelling on the peduncle: the body narrows,
+  // swells again, then necks down at the very end.
   //
-  // A carp's peduncle tapers monotonically into the caudal fin. These stations
-  // are that taper, scaled so the body still meets the drawing's silhouette
-  // either side of the artefact.
-  [0.000, 0.075],
-  [0.020, 0.235],
-  [0.040, 0.330],
-  [0.070, 0.392],
-  [0.100, 0.424],
-  [0.120, 0.446],
-  [0.160, 0.496],
+  // The taper must also be TIGHT. A slow, rounded shoulder here reads as a knob
+  // on the end of the body — the "tail has not narrowed" complaint. A carp's
+  // peduncle necks down over roughly the last 8% of the body and then meets the
+  // fin; these numbers do that and reach a small cap radius so the end cap
+  // tucks inside the caudal root.
+  [0.000, 0.062],
+  [0.010, 0.150],
+  [0.022, 0.252],
+  [0.038, 0.330],
+  [0.060, 0.392],
+  [0.090, 0.428],
+  [0.120, 0.452],
+  [0.160, 0.500],
   [0.200, 0.595],
   [0.250, 0.718],
   [0.300, 0.809],
@@ -705,7 +708,15 @@ function buildTailCloth(style: FishStyle): FinCloth {
       // slit down the middle of the fin. Stopping at 0.16 keeps a real edge on
       // the last column and the taper still reads as a point.
       const tip = 0.16 + 0.84 * Math.pow(Math.max(0, 1 - Math.pow(as, 3)), 0.45);
-      const z = -L * 0.5 + L * 0.04 - d * span * notch;
+      // The fin's root must sit at the body's ACTUAL end, not 4% short of it.
+      //
+      // It used to start at z = -0.46L while the body runs to -0.5L, so the last
+      // 0.04L of the body — still about 0.07L deep — stuck out behind the fin
+      // root. Against the fin's near-zero-radius origin that stub reads as a
+      // blunt knob on the end of the fish: the "tail has not narrowed" report.
+      // Starting the fin at -0.5L puts its origin inside the body's closed cap,
+      // so the silhouette necks straight into the fin.
+      const z = -L * 0.5 - d * span * notch;
       // Scale the height back up to compensate for the floor: the lobe must
       // still span the drawing's width, even though its outer column can no
       // longer reach full depth.
@@ -1016,7 +1027,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
         // ---- scale relief, from the baked normal map. Nothing is
         // differentiated per pixel, so no lattice border can spike.
         {
-          N = applyScaleNormal(N, 0.55 * scaleZone, scaleH);
+          N = applyScaleNormal(N, 0.30 * scaleZone, scaleH);
         }
 
         // ---- lighting
