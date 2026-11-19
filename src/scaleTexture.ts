@@ -56,8 +56,22 @@ function heightAt(u: number, v: number): number {
   const gv = v * ROWS;
   const bx = Math.floor(gu);
   const by = Math.floor(gv);
-  let bestPrio = -1e9;
-  let bestH = 0;
+
+  // ---- smooth union of the neighbouring scales (Lp norm).
+  //
+  // Every previous version asked "which scale owns this point" and took that
+  // one's height. That is a winner-take-all rule, and wherever the winner
+  // changes the field has a step — a cliff that `bodyNormal()` differentiates
+  // into a hard band. Moving the switch point (nearest centre, smooth-max,
+  // zero-at-edge cells) only relocated the cliff; it was never removed.
+  //
+  // The fix is to stop choosing. Each scale contributes a height, the heights
+  // are combined with an Lp norm, and the result varies continuously across the
+  // whole neighbourhood. With p large the union still behaves like a max — the
+  // tallest scale dominates and the shingled look survives — but no single
+  // scale can own a point, so no ownership boundary exists to be visible.
+  const P = 6;
+  let acc = 0;
 
   for (let dy = -2; dy <= 2; dy++) {
     for (let dx = -2; dx <= 2; dx++) {
@@ -72,28 +86,9 @@ function heightAt(u: number, v: number): number {
       if (ddx > COLS * 0.5) ddx -= COLS;
       if (ddx < -COLS * 0.5) ddx += COLS;
 
-      // ---- which scale is on top here.
-      //
-      // Rows still win on dy: a lower row lies over the one behind it. But
-      // WITHIN a row the winner must be the scale whose centre is nearest, not
-      // "whichever has the larger dx". The old `dy + dx*0.02` always picked the
-      // right-hand neighbour of a pair, so the hand-over happened at that
-      // neighbour's left rim — where its own height is zero. The surface height
-      // therefore stepped from the left scale's crown straight down to nothing,
-      // once per column of the lattice: a dark seam running from back to belly,
-      // repeated around the body.
-      //
-      // Nearest-centre moves the hand-over to the midpoint between two scales,
-      // where by symmetry both have the same height. The field is continuous
-      // there, and the seam disappears.
-      const prio = dy * 10 - Math.abs(ddx);
-      if (prio <= bestPrio) continue;
-
       // Fan flares toward -v, i.e. toward the tail once this is laid on the
       // body (uv.y grows toward the snout). The scale is narrow where the row
       // above buries it and wide at the free rim that overhangs the row behind.
-      // Getting this backwards made every scale point at the head, which reads
-      // as reversed overlapping.
       const along = Math.min(1, Math.max(0, (RY - ddy) / (2 * RY)));
       const width = RX * (1.0 - FAN + FAN * along * along);
       const nx = ddx / width;
@@ -101,11 +96,14 @@ function heightAt(u: number, v: number): number {
       const r2 = nx * nx + ny * ny;
       if (r2 >= 1) continue;
 
-      bestPrio = prio;
-      bestH = Math.sqrt(1 - r2);
+      // Height of this scale's dome at the sample, with a small bias so a row
+      // lying toward the tail sits slightly proud of the one behind it — the
+      // overlap direction the drawing shows.
+      const h = Math.sqrt(1 - r2) * (1 + dy * 0.012);
+      acc += Math.pow(h, P);
     }
   }
-  return bestH;
+  return Math.pow(acc, 1 / P);
 }
 
 function makeCanvas(): HTMLCanvasElement {
