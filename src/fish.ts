@@ -90,13 +90,25 @@ const PROFILE_KOI: Profile = [
   // peduncle necks down over roughly the last 8% of the body and then meets the
   // fin; these numbers do that and reach a small cap radius so the end cap
   // tucks inside the caudal root.
-  [0.000, 0.062],
-  [0.010, 0.150],
-  [0.022, 0.252],
-  [0.038, 0.330],
-  [0.060, 0.392],
+  // ---- the body ends AT the peduncle, not at a point.
+  //
+  // Every earlier table tapered the body to a near-zero radius at t = 0 (0.062
+  // of max depth) and then started the caudal fin from a single point. Two
+  // near-points meeting produce the blunt knob that kept being reported: the
+  // body collapses to a needle just before the fin's origin, and the flat end
+  // cap reads as a ball on the end of the fish.
+  //
+  // A real fish does not do this. The body ends at the peduncle — still about a
+  // third of maximum depth — with a vertical cross-section, and the caudal fin
+  // attaches across that whole section. buildTailCloth() now spans its root row
+  // across the same height, so body and fin meet along a line instead of a dot.
+  [0.000, 0.060],
+  [0.010, 0.185],
+  [0.020, 0.300],
+  [0.040, 0.378],
+  [0.060, 0.410],
   [0.090, 0.428],
-  [0.120, 0.452],
+  [0.120, 0.435],
   [0.160, 0.500],
   [0.200, 0.595],
   [0.250, 0.718],
@@ -150,11 +162,11 @@ const WIDTH_KOI: Profile = [
   [0.860, 0.537],
   [0.890, 0.470],
   [0.915, 0.473],
-  [0.940, 0.468],
-  [0.955, 0.445],
-  [0.970, 0.393],
-  [0.985, 0.291],
-  [1.000, 0.110],
+  [0.940, 0.520],
+  [0.955, 0.580],
+  [0.970, 0.660],
+  [0.985, 0.742],
+  [1.000, 0.800],
 ];
 
 const AXIS_KOI: Profile = [
@@ -331,73 +343,38 @@ function bodySurface(style: FishStyle, t: number, angle: number): THREE.Vector3 
   // lips are formed by the cleft below instead.
   const squashY = 1;
 
-  // ---- mouth, cut into the surface.
+  // ---- mouth, cut into the surface (koi only; goldfish keep the old muzzle).
   //
-  // Painting a mouth only ever produced a dark patch on a convex muzzle. What
-  // makes a mouth read is the silhouette plus the two rolls of flesh around it:
-  // the tip must fork into an upper lip and a lower jaw, and each lip needs its
-  // own crest so it catches light.
-  //
-  // Three bands, all gated on t so nothing behind the snout is touched:
-  //   notch — the slot itself, skin pulled back in z
-  //   lip   — a small outward swell just above and below it
-  const cleftT = THREE.MathUtils.smoothstep(t, 0.930, 0.992);
-  const dyN = Math.sin(angle);                     // -1 belly .. +1 back
-  const ady = Math.abs(dyN);
-  const notch = cleftT * (1 - THREE.MathUtils.smoothstep(ady, 0.04, 0.26));
-  const lipBand = cleftT
-    * THREE.MathUtils.smoothstep(ady, 0.20, 0.30)
-    * (1 - THREE.MathUtils.smoothstep(ady, 0.44, 0.72));
-  if (notch > 0 || lipBand > 0) {
-    // the slot: a shallow, wide groove rather than a cut
-    z -= notch * L * 0.013;
-    // the lips part slightly, and each swells outward
-    cy += Math.sign(dyN) * notch * L * 0.005;
-    r *= 1 + lipBand * 0.075;
-  }
-
-  // ---- operculum (gill cover), as GEOMETRY.
-  //
-  // A single Gaussian swell, deliberately. Every earlier version built the plate
-  // from overlapping smoothsteps — rise here, lip there, groove behind — and each
-  // junction between two of them left a curvature break. `bodyNormal()` is a
-  // finite difference, so a curvature break becomes a visible band running from
-  // back to belly. Two such junctions is exactly the "two deep marks on the
-  // front of the body".
-  //
-  // A Gaussian has no junctions: smooth from end to end, and it decays to nothing
-  // on its own, so there is no second boundary to hide. The gill *line* is drawn
-  // by the body shader, which needs no geometry at all.
-  const flankW = Math.pow(Math.abs(Math.cos(angle)), 1.6);
-  if (flankW > 0.02) {
-    const out = Math.exp(-Math.pow((t - 0.838) / 0.062, 2)) * 0.010 * L * flankW;
-    const ca = Math.cos(angle), sa = Math.sin(angle);
-    return new THREE.Vector3(
-      ca * r * style.width * L + ca * out,
-      cy + sa * r * style.depth * L * squashY + sa * out,
-      z,
-    );
+  // Kept because a mouth has to be visible in SILHOUETTE, which no amount of
+  // shading can do. Everything else that used to deform the body here has been
+  // removed — see the note at the top of this function.
+  if (style.koi > 0.5) {
+    const cleftT = THREE.MathUtils.smoothstep(t, 0.930, 0.992);
+    const dyN = Math.sin(angle);                     // -1 belly .. +1 back
+    const ady = Math.abs(dyN);
+    const notch = cleftT * (1 - THREE.MathUtils.smoothstep(ady, 0.04, 0.26));
+    if (notch > 0) {
+      z -= notch * L * 0.013;
+      cy += Math.sign(dyN) * notch * L * 0.005;
+    }
   }
 
   // ---- width along the body.
   //
-  // This used to be a single constant (`style.width`) multiplied into every
-  // cross-section. That is why the plan view was wrong in a way no side-view
-  // measurement could catch: a real fish's width profile is not a scaled copy of
-  // its depth profile. The head stays broad, the peduncle pinches hard.
-  // WIDTH_KOI is the measured plan view.
-  const widthMul = style.koi > 0.5
-    ? smoothProfile(WIDTH_KOI, t)
-    : 1;
-
-  // ---- the snout is a BLADE, not a point.
+  // Two things here, both about avoiding slope breaks:
   //
-  // The depth profile converges on the drawing's point. Width must not follow
-  // it there: a carp's muzzle is thin top-to-bottom and still broad left to
-  // right, with the two lips meeting along a horizontal slot. Without a floor
-  // the tip collapses to a speck and there is no frontal face for a mouth.
-  const blade = THREE.MathUtils.smoothstep(t, 0.930, 1.0);
-  const rX = Math.max(r * widthMul, 0.30 * blade);
+  // 1. `sqrt(r*r + f*f)` instead of `Math.max(r*widthMul, floor)`. The max()
+  //    was C0 but not C1 — the arguments cross at one t, and across that point
+  //    the surface's slope changes abruptly. bodyNormal() differentiates the
+  //    surface, so the break became a bright/dark ring encircling the body: a
+  //    vertical band in side view. The square-root form is smooth everywhere
+  //    and still keeps the muzzle broad.
+  //
+  // 2. WIDTH_KOI is notched near the tip so the plan view stays wide there
+  //    without needing an exception.
+  const widthMul = style.koi > 0.5 ? smoothProfile(WIDTH_KOI, t) : 1;
+  const tipFloor = 0.20 * THREE.MathUtils.smoothstep(t, 0.93, 1.0);
+  const rX = Math.sqrt(r * r + tipFloor * tipFloor) * widthMul;
 
   return new THREE.Vector3(
     Math.cos(angle) * rX * style.width * L,
@@ -463,7 +440,11 @@ function buildBodyGeometry(style: FishStyle, segs = 64, radial = 32): THREE.Buff
       const n = bodyNormal(style, t, angle);
       normals.push(n.x, n.y, n.z);
 
-      uvs.push(arc[j] / perim, t);
+            // Shift the UV so the wrap seam lands on the DORSAL ridge instead of
+      // the flank. With one tile (uScaleTiling = 1,1) the texture's wrap is the
+      // only seam left, and at 0.75 it falls on the back where it cannot be
+      // seen from either side.
+      uvs.push(arc[j] / perim + 0.75, t);
     }
   }
   for (let i = 0; i < segs; i++) {
@@ -697,9 +678,12 @@ function buildTailCloth(style: FishStyle): FinCloth {
     const as = Math.abs(s);
     for (let j = 0; j < rows; j++) {
       const d = j / (rows - 1);
-      // Fork: the middle of the fan is much shallower than the lobes. This is
-      // what makes a carp tail forked rather than triangular.
-      const notch = 1 - 0.62 * Math.exp(-s * s * 3.2);
+      // Fork shape. A carp's tail is forked with a fairly narrow V; the fancy
+      // goldfish read better with a deeper, softer fan, so the two get separate
+      // numbers rather than one compromise.
+      const notch = style.koi > 0.5
+        ? 1 - 0.42 * Math.exp(-s * s * 5.0)
+        : 1 - 0.55 * Math.exp(-s * s * 3.2);
       // Lobe outline.
       //
       // This must never reach ZERO at the outer column. When it did, the last
@@ -708,19 +692,28 @@ function buildTailCloth(style: FishStyle): FinCloth {
       // slit down the middle of the fin. Stopping at 0.16 keeps a real edge on
       // the last column and the taper still reads as a point.
       const tip = 0.16 + 0.84 * Math.pow(Math.max(0, 1 - Math.pow(as, 3)), 0.45);
-      // The fin's root must sit at the body's ACTUAL end, not 4% short of it.
+      // The fin's root must sit at the body's ACTUAL end, AND span it.
       //
-      // It used to start at z = -0.46L while the body runs to -0.5L, so the last
-      // 0.04L of the body — still about 0.07L deep — stuck out behind the fin
-      // root. Against the fin's near-zero-radius origin that stub reads as a
-      // blunt knob on the end of the fish: the "tail has not narrowed" report.
-      // Starting the fin at -0.5L puts its origin inside the body's closed cap,
-      // so the silhouette necks straight into the fin.
-      const z = -L * 0.5 - d * span * notch;
-      // Scale the height back up to compensate for the floor: the lobe must
-      // still span the drawing's width, even though its outer column can no
-      // longer reach full depth.
-      const y = s * Math.pow(d, 0.88) * L * 0.278 * tip;
+      // Two separate errors used to live here. The root started at z = -0.46L
+      // while the body runs to -0.5L, so a stub of body protruded behind the
+      // fin. And every d = 0 vertex collapsed onto a single point, so a body
+      // ending in a rounded cap met a fin starting from a dot — the blunt knob
+      // that kept being reported as "the tail has not narrowed".
+      //
+      // The root row now spans the peduncle: at d = 0 the fin is a vertical line
+      // exactly as tall as the body's end cross-section, so the two meet along a
+      // line and the silhouette necks straight into the fin.
+      // The root row sits 2% FORWARD of the body's tip, at the station where
+      // the body is exactly rootHalf deep, and the body carries on tapering to
+      // almost nothing behind it. That last sliver is hidden behind the fin's
+      // membrane, so the silhouette reads as body-blending-into-fin instead of
+      // body-then-a-vertical-cut.
+      const z = -L * (style.koi > 0.5 ? 0.48 : 0.5) - d * span * notch;
+      // Koi get a root row that spans the peduncle; goldfish keep the fan that
+      // grows from a point, which is what their silhouette actually shows.
+      const rootHalf = style.koi > 0.5 ? 0.300 * style.depth * L : 0;
+      const lobeHalf = L * 0.278 * tip;
+      const y = s * (rootHalf * (1 - d) + lobeHalf * Math.pow(d, 0.88));
       const x = s * d * L * 0.070 * tip + d * d * Math.cos(s * 1.9) * L * 0.040;
       const o = (i * rows + j) * 3;
       rest[o] = x;
@@ -795,7 +788,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
     // gives ~18 scales around and 22 rows along the body — the density in the
     // reference drawing. (2, 5) was putting 55 rows on the flank, which read
     // as fine grain rather than scales.
-    uScaleTiling: { value: new THREE.Vector2(3, 4) },
+    uScaleTiling: { value: new THREE.Vector2(1, 1) },
     // local y of the snout tip: the mouth is placed relative to this, because
     // the muzzle droops and an absolute y put the cleft on the cheek
     uTipY: { value: bodySurface(style, 1.0, 0).y },
@@ -950,12 +943,13 @@ export function makeFish(style: FishStyle, shared: Shared): {
         // Kept shallow: the reference has a soft relief, and a strong value step
         // made the flank look like hexagonal tiles.
         {
-          // The winner-takes-all lattice has deep troughs where one scale slips
-          // under the next, so the same modulation range that was right for the
-          // old shallow domes now darkens whole bands of the flank. The normal
-          // map carries the relief; albedo only needs a whisper of shading.
+          // Height modulates the albedo only where the scales are, and the
+          // modulation is written so that scaleZone = 0 yields exactly 1.0 —
+          // no step when the zone fades out. The previous mix(0.975, 1.012, …)
+          // changed the base brightness by 3.7% between inside and outside the
+          // zone, which drew its own faint band where the zone faded.
           float th = texture2D(uScaleHeight, scaleUV()).r;
-          col *= mix(0.975, 1.012, th * scaleZone + (1.0 - scaleZone));
+          col *= 1.0 + (th - 0.5) * 0.05 * scaleZone;
         }
 
         // ---- mouth cleft: the dark inside of the notch cut in bodySurface().
@@ -990,48 +984,54 @@ export function makeFish(style: FishStyle, shared: Shared): {
 
         // ---- operculum (gill cover).
         //
-        // In the reference this is not a line drawn on the side: it is a broad
-        // crescent whose front edge is a soft step in the skin, with a short
-        // shadow under its rear edge near the belly. Making the edge a thin
-        // straight stroke is what has been reading as a scratch across the
-        // body, so the slit is now short, low, and the plate edge is soft.
+        // ONE soft crescent, and nothing else.
+        //
+        // The previous version layered four effects into the same few percent of
+        // body length: a 0.93 plate, a 0.72 slit drawn with a 1.1%-wide
+        // smoothstep (a near-hard line), a 1.10 bright edge, and — separately —
+        // a geometric bump and an albedo ramp from the scale zone. Each is a
+        // band; stacked they read as the two dark marks that kept being
+        // reported. A gill cover should be a soft shading break with no line in
+        // it at all, so this is now a single gradient with one weak highlight.
         {
           float ay = lp.y / max(0.001, uLen * 0.135);   // -1 belly .. +1 back
-          // Must match the geometric operculum in bodySurface(): the opening
-          // sits at t = 0.782 and the raised cover runs forward from it. The
-          // painted line used to be at 0.752, 3% of the body behind the plate
-          // it was supposed to be shading.
-          float gillLine = 0.782 - 0.030 * ay * ay - 0.022 * ay;
+          // Slightly curved edge, softer toward the belly.
+          float gillLine = 0.800 - 0.020 * ay * ay;
           float d = along - gillLine;
+          float onFlank = smoothstep(1.05, 0.30, abs(ay));
 
-          // Only across the flank; gone at the dorsal ridge and the belly.
-          float onFlank = smoothstep(1.05, 0.35, abs(ay));
+          // A wide, gentle darkening ahead of the opening, fading out over 18%
+          // of body length. No narrow term, so there is nothing that can read
+          // as a line or a crease.
+          float cover = smoothstep(0.18, 0.0, d) * smoothstep(-0.06, 0.02, d);
+          col = mix(col, col * 0.955, cover * onFlank * 0.9);
 
-          // The cover plate: soft shading break, wide and gentle.
-          float plate = smoothstep(0.120, 0.010, -d) * onFlank;
-          col = mix(col, col * 0.93, plate * 0.55);
-
-          // A short shadow tucks under the rear edge, strongest low on the
-          // flank and fading out before the back — that asymmetry is what
-          // stops it looking like a drawn line.
-          float slitLow = smoothstep(0.30, -0.55, ay);
-          float slit = smoothstep(0.011, 0.001, abs(d)) * onFlank * slitLow;
-          col = mix(col, col * 0.72, slit * 0.85);
-
-          // The lip of the plate catches a little light along its front.
-          float edge = smoothstep(0.016, 0.003, abs(d - 0.013)) * onFlank;
-          col = mix(col, col * 1.10, edge * 0.65);
-          col = mix(col, vec3(0.070, 0.024, 0.018), slit * 0.85);
+          // The free edge catches a touch of light — a low-contrast ridge, not
+          // an outline. Written as x*x because pow() is undefined for a
+          // negative base in GLSL ES 1.0, and a shader compile error here makes
+          // the whole body disappear.
+          float dd = (d - 0.005) / 0.022;
+          float rim = exp(-dd * dd) * onFlank;
+          col = mix(col, col * 1.035, rim * 0.6);
         }
 
         // ---- scale relief, from the baked normal map. Nothing is
         // differentiated per pixel, so no lattice border can spike.
+        //
+        // Strength falls off with viewing angle. Toward the belly and along the
+        // silhouette the surface is nearly edge-on, so a fixed-strength tilt is
+        // magnified in screen space and the scale troughs smear into long
+        // vertical streaks — which is what has been reading as dark bands down
+        // the flank. Physically the relief should also be least visible there,
+        // since the surface is seen at a grazing angle.
+        vec3 V0 = normalize(cameraPosition - vWorld);
+        float facing = clamp(dot(normalize(vNormal), V0), 0.0, 1.0);
         {
-          N = applyScaleNormal(N, 0.30 * scaleZone, scaleH);
+          N = applyScaleNormal(N, 0.30 * scaleZone * pow(facing, 1.4), scaleH);
         }
 
         // ---- lighting
-        vec3 V = normalize(cameraPosition - vWorld);
+        vec3 V = V0;
         vec3 L = normalize(uSunDir);
         float casc = causticSample(vWorld, uTime);
         float atten = exp(-max(0.0, 4.05 - vWorld.y) * 0.10);

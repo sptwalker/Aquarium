@@ -24,8 +24,8 @@ const TILE = 512;
 // scale, and that parity has to match across the wrap or the pattern steps at
 // the tile boundary — an odd count put a hard vertical line down the flank at
 // exactly the seam column.
-const COLS = 8;   // scales around the body per tile
-const ROWS = 12;  // scale rows per tile
+const COLS = 16;  // scales around the body — the WHOLE body, one tile
+const ROWS = 32;  // scale rows along the body — one tile
 
 /** Half-width / half-height of one scale, in lattice cells. */
 const RX = 0.95;
