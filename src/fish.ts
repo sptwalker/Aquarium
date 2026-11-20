@@ -637,6 +637,14 @@ function buildFin(
         .normalize();
 
       const p = root.clone()
+        // Sink the root slightly INTO the skin.
+        //
+        // Welded onto the surface, the fin's root row is coplanar with the body,
+        // and the membrane rising away from it forms a sharp crevice that shades
+        // as a dark wedge wherever a fin attaches — one of the vertical marks on
+        // the front of the body is exactly the pectoral root. Pushing the root
+        // 0.4% of body length inside hides the crevice behind the body surface.
+        .addScaledVector(nrm, -L * 0.004)
         .addScaledVector(dir, d * maxH * env * ripple)
         .addScaledVector(chordDir, across - sweepBack);
 
@@ -687,8 +695,10 @@ function buildTailCloth(style: FishStyle): FinCloth {
       // |s| < 0.3), so the trailing edge came out as a long straight step with
       // square shoulders — a rectangular opening, which reads as the fin having
       // been cut or split. A linear ramp in |s| gives the V the drawing shows.
+      // A shallow V. Deep forks read as a fin that has been cut open; the
+      // drawing's fork is a modest notch between two long, pointed lobes.
       const notch = style.koi > 0.5
-        ? 0.55 + 0.45 * Math.pow(as, 1.15)
+        ? 0.74 + 0.26 * Math.pow(as, 1.3)
         : 1 - 0.55 * Math.exp(-s * s * 3.2);
       // Lobe outline.
       //
@@ -697,7 +707,7 @@ function buildTailCloth(style: FishStyle): FinCloth {
       // z — so the membrane folded back on itself there and rendered as a black
       // slit down the middle of the fin. Stopping at 0.16 keeps a real edge on
       // the last column and the taper still reads as a point.
-      const tip = 0.16 + 0.84 * Math.pow(Math.max(0, 1 - Math.pow(as, 3)), 0.45);
+      const tip = 0.05 + 0.95 * Math.pow(Math.max(0, 1 - Math.pow(as, 3)), 0.40);
       // The fin's root must sit at the body's ACTUAL end, AND span it.
       //
       // Two separate errors used to live here. The root started at z = -0.46L
@@ -714,12 +724,15 @@ function buildTailCloth(style: FishStyle): FinCloth {
       // almost nothing behind it. That last sliver is hidden behind the fin's
       // membrane, so the silhouette reads as body-blending-into-fin instead of
       // body-then-a-vertical-cut.
-      const z = -L * (style.koi > 0.5 ? 0.48 : 0.5) - d * span * notch;
-      // Koi get a root row that spans the peduncle; goldfish keep the fan that
-      // grows from a point, which is what their silhouette actually shows.
-      const rootHalf = style.koi > 0.5 ? 0.300 * style.depth * L : 0;
-      const lobeHalf = L * 0.278 * tip;
-      const y = s * (rootHalf * (1 - d) + lobeHalf * Math.pow(d, 0.88));
+      // Root at a POINT for every species.
+      //
+      // Spanning the root across the peduncle was meant to blend body into fin,
+      // but a tall root row extruded backward is a cone — which is exactly the
+      // "fin is a split tube" report. A real caudal fin is a membrane that
+      // starts at the peduncle's end and fans out behind it.
+      const z = -L * 0.5 - d * span * notch;
+      const lobeHalf = L * 0.30 * tip;
+      const y = s * lobeHalf * Math.pow(d, 0.85);
       const x = s * d * L * 0.070 * tip + d * d * Math.cos(s * 1.9) * L * 0.040;
       const o = (i * rows + j) * 3;
       rest[o] = x;
@@ -952,7 +965,16 @@ export function makeFish(style: FishStyle, shared: Shared): {
         // looked like it never narrowed into it. Both ramps are now spread over
         // a third of the body, and the tail end extends far enough back that no
         // smooth patch survives in front of the caudal root.
-        float scaleZone = smoothstep(0.02, 0.34, along) * smoothstep(0.99, 0.90, along);
+        // Scales cover the WHOLE body, with no zone at all.
+        //
+        // The relief darkens the surface slightly on average (bumps facing away
+        // from the light), so any region that has scales is a shade darker than
+        // one that does not. That difference is what produced the two dark
+        // vertical marks: not the steepness of the fade — a third of the body
+        // long fade was still a visible band — but the fact that a boundary
+        // existed. Removing the zone removes the boundary, so the only fade left
+        // is at the very tip of the snout.
+        float scaleZone = smoothstep(0.0, 0.03, along);
 
         float scaleH;                       // filled in by applyScaleNormal
         // The height map darkens the trough where one scale slips under the next.
@@ -1043,7 +1065,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
         vec3 V0 = normalize(cameraPosition - vWorld);
         float facing = clamp(dot(normalize(vNormal), V0), 0.0, 1.0);
         {
-          N = applyScaleNormal(N, 0.11 * scaleZone * pow(facing, 1.4), scaleH);
+          N = applyScaleNormal(N, 0.20 * scaleZone * pow(facing, 1.35), scaleH);
         }
 
         // ---- lighting
@@ -1119,7 +1141,10 @@ export function makeFish(style: FishStyle, shared: Shared): {
         // silhouette edge disappears and the fin appears to grow out of the
         // skin instead of being a card laid against it.
         vec3 bodyCol = mix(uHueA, uHueB, 0.45);
-        float rootBlend = 1.0 - smoothstep(0.0, 0.28, vUv.y);
+        // A wide root blend. At 0.28 the fin reached full colour within a quarter of
+        // its length, which left a visible tonal step where the membrane leaves
+        // the skin — another source of the "deep mark" look at every fin base.
+        float rootBlend = 1.0 - smoothstep(0.0, 0.45, vUv.y);
         vec3 base = mix(uFinTint, bodyCol, rootBlend * 0.85);
         base *= (0.55 + 0.45 * rays) * (1.0 - 0.22 * thin);
 

@@ -75,7 +75,7 @@ function heightAt(u: number, v: number): number {
   // armour plating. Real scales are rounded domes whose edges sink under their
   // neighbours, so p is now 3 — still shingled, but with the crown falling away
   // smoothly instead of ending at a lip.
-  const P = 3;
+  const P = 4;
   let acc = 0;
 
   for (let dy = -2; dy <= 2; dy++) {
@@ -179,7 +179,7 @@ export function makeScaleMaps(): ScaleMaps {
   const nCanvas = makeCanvas();
   const nCtx = nCanvas.getContext('2d')!;
   const nImg = nCtx.createImageData(TILE, TILE);
-  const strength = 1.3;
+  const strength = 1.8;
   for (let y = 0; y < TILE; y++) {
     for (let x = 0; x < TILE; x++) {
       const hL = sample(x - 1, y);
