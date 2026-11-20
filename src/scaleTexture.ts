@@ -67,10 +67,15 @@ function heightAt(u: number, v: number): number {
   //
   // The fix is to stop choosing. Each scale contributes a height, the heights
   // are combined with an Lp norm, and the result varies continuously across the
-  // whole neighbourhood. With p large the union still behaves like a max — the
-  // tallest scale dominates and the shingled look survives — but no single
-  // scale can own a point, so no ownership boundary exists to be visible.
-  const P = 6;
+  // whole neighbourhood. No single scale can own a point, so no ownership
+  // boundary exists to be visible.
+  //
+  // p controls the shape of the union. At p = 6 the norm behaves very much like
+  // a max: each scale keeps a flat top and a crisp rim, and the result reads as
+  // armour plating. Real scales are rounded domes whose edges sink under their
+  // neighbours, so p is now 3 — still shingled, but with the crown falling away
+  // smoothly instead of ending at a lip.
+  const P = 3;
   let acc = 0;
 
   for (let dy = -2; dy <= 2; dy++) {
@@ -174,7 +179,7 @@ export function makeScaleMaps(): ScaleMaps {
   const nCanvas = makeCanvas();
   const nCtx = nCanvas.getContext('2d')!;
   const nImg = nCtx.createImageData(TILE, TILE);
-  const strength = 2.2;
+  const strength = 1.3;
   for (let y = 0; y < TILE; y++) {
     for (let x = 0; x < TILE; x++) {
       const hL = sample(x - 1, y);

@@ -681,8 +681,14 @@ function buildTailCloth(style: FishStyle): FinCloth {
       // Fork shape. A carp's tail is forked with a fairly narrow V; the fancy
       // goldfish read better with a deeper, softer fan, so the two get separate
       // numbers rather than one compromise.
+      // A carp's caudal fork is a V, not a slot.
+      //
+      // A Gaussian notch is flat across the middle (exp(-s^2) barely changes for
+      // |s| < 0.3), so the trailing edge came out as a long straight step with
+      // square shoulders — a rectangular opening, which reads as the fin having
+      // been cut or split. A linear ramp in |s| gives the V the drawing shows.
       const notch = style.koi > 0.5
-        ? 1 - 0.42 * Math.exp(-s * s * 5.0)
+        ? 0.55 + 0.45 * Math.pow(as, 1.15)
         : 1 - 0.55 * Math.exp(-s * s * 3.2);
       // Lobe outline.
       //
@@ -935,8 +941,18 @@ export function makeFish(style: FishStyle, shared: Shared): {
         col = mix(col, mix(col, vec3(0.92, 0.55, 0.30), 0.45), wenN * 0.55);
 
         // ---- shingled scales, sampled from the baked map.
-        // no scales on the snout; they run back over the peduncle
-        float scaleZone = smoothstep(0.06, 0.20, along) * smoothstep(0.86, 0.72, along);
+        //
+        // The zone must fade so gradually that its edges are invisible.
+        //
+        // It used to run in over along = 0.06–0.20 and out again over 0.72–0.86.
+        // Those two ramps are vertical boundaries where the skin changes from
+        // smooth to scaled, and at the relief strength being used they read as
+        // the two dark bands reported on the front of the body — plus a bright
+        // scale-less "collar" just ahead of the tail, which is why the body
+        // looked like it never narrowed into it. Both ramps are now spread over
+        // a third of the body, and the tail end extends far enough back that no
+        // smooth patch survives in front of the caudal root.
+        float scaleZone = smoothstep(0.02, 0.34, along) * smoothstep(0.99, 0.90, along);
 
         float scaleH;                       // filled in by applyScaleNormal
         // The height map darkens the trough where one scale slips under the next.
@@ -1027,7 +1043,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
         vec3 V0 = normalize(cameraPosition - vWorld);
         float facing = clamp(dot(normalize(vNormal), V0), 0.0, 1.0);
         {
-          N = applyScaleNormal(N, 0.30 * scaleZone * pow(facing, 1.4), scaleH);
+          N = applyScaleNormal(N, 0.11 * scaleZone * pow(facing, 1.4), scaleH);
         }
 
         // ---- lighting

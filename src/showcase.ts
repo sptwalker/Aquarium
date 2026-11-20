@@ -9,6 +9,17 @@ import { FullPass } from './post';
 const canvas = document.getElementById('view') as HTMLCanvasElement;
 const toggle = document.getElementById('toggle') as HTMLButtonElement;
 
+// Build stamp, injected by vite (see vite.config.ts).
+//
+// Several rounds of fixes were reported as "no visible change", with no way to
+// tell whether the browser was even running the new code. Showing it on screen
+// makes every screenshot self-identifying.
+declare const __BUILD__: string;
+{
+  const el = document.getElementById('build');
+  if (el) el.textContent = ' · ' + __BUILD__;
+}
+
 // ---- silhouette mode
 //
 // `?silhouette=1` renders the body mesh alone, flat white on black, through an
