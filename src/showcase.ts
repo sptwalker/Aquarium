@@ -296,11 +296,20 @@ declare global {
     __showcase?: {
       setPlaying: (v: boolean) => void;
       isPlaying: () => boolean;
+      group?: THREE.Group;
+      body?: THREE.Mesh;
     };
   }
 }
 
-window.__showcase = { setPlaying, isPlaying: () => playing };
+window.__showcase = {
+  setPlaying,
+  isPlaying: () => playing,
+  // debug handle: expose the group so a test can hide individual meshes and
+  // attribute a visual defect to a specific object instead of guessing.
+  group: built.group,
+  body: built.body,
+};
 // exposed so the screenshot harness can orbit to a fixed angle
 window.__camera = { camera, controls };
 window.__ready = true;

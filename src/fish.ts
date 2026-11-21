@@ -76,62 +76,40 @@ const PROFILE_GOLDFISH: Profile = [
  * is the view the user is comparing against.
  */
 const PROFILE_KOI: Profile = [
-  // The trailing stations are NOT the raw trace values.
-  //
-  // The trace of the drawing bulges between u≈0.045 and u≈0.13 (raw half-depth
-  // climbing 0.367 → 0.389 → 0.438) before falling to the tip. That bulge is
-  // where the caudal fin's rays converge and the body's outline is interrupted
-  // by the fin root — an artefact of separating fin from body, not a shape.
-  // Reproducing it verbatim put a swelling on the peduncle: the body narrows,
-  // swells again, then necks down at the very end.
-  //
-  // The taper must also be TIGHT. A slow, rounded shoulder here reads as a knob
-  // on the end of the body — the "tail has not narrowed" complaint. A carp's
-  // peduncle necks down over roughly the last 8% of the body and then meets the
-  // fin; these numbers do that and reach a small cap radius so the end cap
-  // tucks inside the caudal root.
-  // ---- the body ends AT the peduncle, not at a point.
-  //
-  // Every earlier table tapered the body to a near-zero radius at t = 0 (0.062
-  // of max depth) and then started the caudal fin from a single point. Two
-  // near-points meeting produce the blunt knob that kept being reported: the
-  // body collapses to a needle just before the fin's origin, and the flat end
-  // cap reads as a ball on the end of the fish.
-  //
-  // A real fish does not do this. The body ends at the peduncle — still about a
-  // third of maximum depth — with a vertical cross-section, and the caudal fin
-  // attaches across that whole section. buildTailCloth() now spans its root row
-  // across the same height, so body and fin meet along a line instead of a dot.
-  [0.000, 0.060],
-  [0.010, 0.185],
-  [0.020, 0.300],
-  [0.040, 0.378],
-  [0.060, 0.410],
-  [0.090, 0.428],
-  [0.120, 0.435],
-  [0.160, 0.500],
-  [0.200, 0.595],
-  [0.250, 0.718],
-  [0.300, 0.809],
-  [0.350, 0.882],
-  [0.400, 0.939],
-  [0.450, 0.980],
-  [0.500, 0.999],
-  [0.550, 0.988],
-  [0.600, 0.922],
-  [0.650, 0.842],
-  [0.700, 0.845],
-  [0.750, 0.783],
-  [0.790, 0.673],
-  [0.830, 0.619],
-  [0.860, 0.592],
-  [0.890, 0.537],
-  [0.915, 0.459],
-  [0.940, 0.353],
-  [0.955, 0.285],
-  [0.970, 0.213],
-  [0.985, 0.135],
-  [1.000, 0.059],
+  // The last 3% necks down so the body's end cap is small; the caudal fin
+  // roots at z=-0.5L, so a full-radius cap there would show as a stump.
+  [0.000, 0.120],
+  [0.012, 0.235],
+  [0.030, 0.328],
+  [0.060, 0.388],
+  [0.090, 0.462],
+  [0.120, 0.534],
+  [0.160, 0.615],
+  [0.200, 0.685],
+  [0.250, 0.773],
+  [0.300, 0.837],
+  [0.350, 0.881],
+  [0.400, 0.933],
+  [0.450, 0.982],
+  [0.500, 1.000],
+  [0.550, 0.985],
+  [0.600, 0.946],
+  [0.650, 0.888],
+  [0.700, 0.813],
+  [0.750, 0.717],
+  [0.790, 0.630],
+  [0.830, 0.546],
+  [0.860, 0.495],
+  [0.890, 0.458],
+  [0.915, 0.437],
+  // The trace's final columns include the mouth and lip strokes, so the fitted
+  // half-depth there is 0.40 — a blunt nose. The drawing's muzzle does close to
+  // a point, so the last 6% is tapered to one by hand.
+  [0.940, 0.360],
+  [0.960, 0.280],
+  [0.976, 0.185],
+  [0.990, 0.100],
+  [1.000, 0.045],
 ];
 
 /**
@@ -170,33 +148,34 @@ const WIDTH_KOI: Profile = [
 ];
 
 const AXIS_KOI: Profile = [
-  [0.000, 0.040],
-  [0.040, -0.035],
-  [0.080, -0.039],
-  [0.120, -0.063],
-  [0.160, -0.089],
-  [0.200, -0.106],
-  [0.250, -0.107],
-  [0.300, -0.086],
-  [0.350, -0.063],
-  [0.400, -0.042],
-  [0.450, -0.021],
-  [0.500, 0.000],
-  [0.550, 0.030],
-  [0.600, 0.092],
-  [0.650, 0.151],
-  [0.700, 0.105],
-  [0.750, 0.098],
-  [0.790, 0.133],
-  [0.830, 0.093],
-  [0.860, 0.043],
-  [0.890, 0.017],
-  [0.915, 0.026],
-  [0.940, 0.058],
-  [0.955, 0.080],
-  [0.970, 0.096],
-  [0.985, 0.111],
-  [1.000, 0.124],
+  [0.000, 0.000],
+  [0.030, -0.010],
+  [0.060, -0.023],
+  [0.090, -0.031],
+  [0.120, -0.028],
+  [0.160, -0.006],
+  [0.200, 0.017],
+  [0.250, 0.027],
+  [0.300, 0.034],
+  [0.350, 0.036],
+  [0.400, 0.006],
+  [0.450, -0.041],
+  [0.500, -0.077],
+  [0.550, -0.103],
+  [0.600, -0.125],
+  [0.650, -0.147],
+  [0.700, -0.168],
+  [0.750, -0.182],
+  [0.790, -0.183],
+  [0.830, -0.172],
+  [0.860, -0.158],
+  [0.890, -0.144],
+  [0.915, -0.134],
+  [0.940, -0.128],
+  [0.960, -0.125],
+  [0.976, -0.123],
+  [0.990, -0.123],
+  [1.000, -0.122],
 ];
 
 const STYLES: Record<FishSpecies, FishStyle> = {
@@ -697,8 +676,11 @@ function buildTailCloth(style: FishStyle): FinCloth {
       // been cut or split. A linear ramp in |s| gives the V the drawing shows.
       // A shallow V. Deep forks read as a fin that has been cut open; the
       // drawing's fork is a modest notch between two long, pointed lobes.
+      // LINEAR in |s| for the koi: the trailing edge is then a straight-sided V.
+      // A power above 1 is flat near s = 0, which gives the notch a flat floor
+      // and square shoulders — the "rectangular hole" it kept reading as.
       const notch = style.koi > 0.5
-        ? 0.74 + 0.26 * Math.pow(as, 1.3)
+        ? 0.10 + 0.90 * Math.pow(as, 0.85)
         : 1 - 0.55 * Math.exp(-s * s * 3.2);
       // Lobe outline.
       //
@@ -707,7 +689,7 @@ function buildTailCloth(style: FishStyle): FinCloth {
       // z — so the membrane folded back on itself there and rendered as a black
       // slit down the middle of the fin. Stopping at 0.16 keeps a real edge on
       // the last column and the taper still reads as a point.
-      const tip = 0.05 + 0.95 * Math.pow(Math.max(0, 1 - Math.pow(as, 3)), 0.40);
+      const tip = 0.02 + 0.98 * Math.pow(Math.max(0, 1 - Math.pow(as, 2.2)), 0.55);
       // The fin's root must sit at the body's ACTUAL end, AND span it.
       //
       // Two separate errors used to live here. The root started at z = -0.46L
@@ -731,7 +713,7 @@ function buildTailCloth(style: FishStyle): FinCloth {
       // "fin is a split tube" report. A real caudal fin is a membrane that
       // starts at the peduncle's end and fans out behind it.
       const z = -L * 0.5 - d * span * notch;
-      const lobeHalf = L * 0.30 * tip;
+      const lobeHalf = L * 0.34 * tip;
       const y = s * lobeHalf * Math.pow(d, 0.85);
       const x = s * d * L * 0.070 * tip + d * d * Math.cos(s * 1.9) * L * 0.040;
       const o = (i * rows + j) * 3;
