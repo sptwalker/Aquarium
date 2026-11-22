@@ -76,45 +76,34 @@ const PROFILE_GOLDFISH: Profile = [
  * is the view the user is comparing against.
  */
 const PROFILE_KOI: Profile = [
-  // The last 2% necks down; the caudal fin roots just ahead of here, at a
-  // station where the body still has depth, so the two meet along a line and
-  // the fin fans out from the peduncle rather than from a point.
-  [0.000, 0.150],
-  [0.008, 0.300],
-  [0.020, 0.392],
-  [0.030, 0.407],
-  [0.060, 0.421],
-  [0.090, 0.441],
-  [0.120, 0.469],
-  [0.160, 0.528],
-  [0.200, 0.608],
-  [0.250, 0.717],
-  [0.300, 0.813],
-  [0.350, 0.888],
-  [0.400, 0.946],
-  [0.450, 0.985],
-  [0.500, 1.000],
-  [0.550, 0.982],
-  [0.600, 0.933],
-  [0.650, 0.881],
-  [0.700, 0.837],
-  [0.750, 0.773],
-  [0.790, 0.703],
-  [0.830, 0.633],
-  [0.860, 0.577],
-  [0.890, 0.511],
-  [0.915, 0.449],
-  // The trace's final columns include the mouth and lip strokes, so the fitted
-  // half-depth plateaus at 0.29 instead of closing. The drawing's muzzle tapers
-  // to a point over roughly the last 7%, and this is that taper: it stays full
-  // through the eye and then converges smoothly.
-  [0.930, 0.415],
-  [0.948, 0.330],
-  [0.962, 0.245],
-  [0.975, 0.160],
-  [0.986, 0.092],
-  [0.994, 0.045],
-  [1.000, 0.018],
+  [0.000, 0.133],
+  [0.030, 0.360],
+  [0.060, 0.375],
+  [0.090, 0.399],
+  [0.120, 0.435],
+  [0.160, 0.516],
+  [0.200, 0.634],
+  [0.250, 0.803],
+  [0.300, 0.940],
+  [0.350, 1.000],
+  [0.400, 0.991],
+  [0.450, 0.953],
+  [0.500, 0.915],
+  [0.550, 0.876],
+  [0.600, 0.825],
+  [0.650, 0.777],
+  [0.700, 0.738],
+  [0.750, 0.681],
+  [0.790, 0.620],
+  [0.830, 0.558],
+  [0.860, 0.509],
+  [0.890, 0.450],
+  [0.915, 0.396],
+  [0.940, 0.327],
+  [0.960, 0.227],
+  [0.976, 0.135],
+  [0.990, 0.058],
+  [1.000, 0.016],
 ];
 
 /**
@@ -219,7 +208,7 @@ const STYLES: Record<FishSpecies, FishStyle> = {
   // Metallic gold carp, following the second reference: a warm golden body,
   // slightly deeper orange along the back, pale fins, four barbels.
   koi: {
-    length: 1.45, depth: 0.165, width: 0.072, profile: PROFILE_KOI,
+    length: 1.45, depth: 0.252, width: 0.072, profile: PROFILE_KOI,
     hueA: new THREE.Vector3(1.00, 0.45, 0.05),    // orange-red ground
     hueB: new THREE.Vector3(0.88, 0.19, 0.02),    // deeper red along the back
     belly: new THREE.Vector3(1.00, 0.95, 0.86),   // pale, almost white underside
@@ -525,7 +514,7 @@ function buildFin(
   //   pelvic     u 0.44–0.58   (t 0.42–0.56)
   //   anal       u 0.63–0.75   (t 0.25–0.37)
   const tSpan: [number, number] =
-    kind === 'dorsal' ? [0.27, 0.61]
+    kind === 'dorsal' ? [0.20, 0.56]
     : kind === 'anal' ? [0.25, 0.37]
     : kind === 'pectoral' ? [0.62, 0.75]
     : [0.42, 0.56];
@@ -541,9 +530,9 @@ function buildFin(
   // overshoot that appears once a swept membrane is actually projected.
   const FIN_TRIM = 0.88;
   const maxH =
-    kind === 'dorsal' ? L * 0.175 * FIN_TRIM
+    kind === 'dorsal' ? L * 0.185 * FIN_TRIM
     : kind === 'anal' ? L * 0.126 * FIN_TRIM
-    : kind === 'pectoral' ? L * 0.144 * FIN_TRIM
+    : kind === 'pectoral' ? L * 0.168 * FIN_TRIM
     : L * 0.153 * FIN_TRIM;
 
   // Root angle on the cross-section. Pectorals and pelvics sit on the flank /
@@ -594,7 +583,13 @@ function buildFin(
 
       // taper to nothing at both ends of the span so the outline meets the body
       const arc = Math.sin(Math.min(1, Math.max(0, (u - 0.02) / 0.96)) * Math.PI);
-      const env = Math.pow(arc, 0.55);
+      // The dorsal fin is NOT symmetric like the others. Its leading edge (the
+      // head side, u = 1 here) rises steeply and its trailing edge slopes away,
+      // so the envelope peaks well forward of the middle. A symmetric hump made
+      // it a rounded loaf, which is what it kept looking like.
+      const env = kind === 'dorsal'
+        ? Math.pow(Math.sin(Math.min(1, Math.max(0, (u - 0.02) / 0.96)) ** 1.7 * Math.PI), 0.55)
+        : Math.pow(arc, 0.55);
 
       // Chord width starts at *zero* at the root. That is what welds the fin to
       // the body: at d = 0 every column collapses onto the single sampled skin
@@ -666,7 +661,10 @@ function buildTailCloth(style: FishStyle): FinCloth {
   // spring constraints, which is negligible.
   const cols = 46;
   const rows = 26;
-  const span = L * (style.width < 0.11 ? 0.34 : 0.26);
+  // Caudal length. Measured off the reference photo with tools/ref-fins.mjs:
+  // the fin reaches 0.53 body lengths behind the peduncle. It was 0.34, which
+  // is why the tail read as a stubby fan rather than a flowing one.
+  const span = L * (style.koi > 0.5 ? 0.50 : (style.width < 0.11 ? 0.34 : 0.26));
   const rest = new Float32Array(cols * rows * 3);
 
   for (let i = 0; i < cols; i++) {
@@ -703,12 +701,21 @@ function buildTailCloth(style: FishStyle): FinCloth {
       let z: number, y: number, x: number;
       if (style.koi > 0.5) {
         const rootHalf = 0.38 * style.depth * L;     // matches the peduncle
-        const lobeHalf = L * 0.265;
+        // Half the reference's total caudal height (0.376 body lengths)
+        const lobeHalf = L * 0.215;
         // Shallow V: 80% of full depth at the centre, full depth at the tips.
         // Anything deeper reads as a fin that has been cut open.
-        const notch = 0.80 + 0.20 * as;
-        const half = rootHalf * (1 - d) + lobeHalf * Math.pow(d, 0.80);
-        z = -L * 0.49 - d * span * notch;
+        const notch = 0.70 + 0.30 * Math.pow(as, 1.25);
+        // Round the lobe tips. Without this the outer columns run straight out
+        // to |s| = 1 and the trailing edge is a square corner — the fin reads as
+        // a flag rather than a tail.
+        const roundTip = Math.sqrt(Math.max(0.10, 1.0 - 0.45 * Math.pow(as, 4)));
+        const half = (rootHalf * (1 - d) + lobeHalf * Math.pow(d, 0.80)) * roundTip;
+        // The trailing-edge extension must shrink with the tip rounding as well.
+        // Only the height was being tapered, so the outermost columns kept their
+        // full backward reach while collapsing to zero height — two thin needles
+        // sticking out beyond the lobes.
+        z = -L * 0.49 - d * span * notch * (0.55 + 0.45 * roundTip);
         y = s * half;
         x = d * d * Math.cos(s * 1.9) * L * 0.018;
       } else {
@@ -921,15 +928,23 @@ export function makeFish(style: FishStyle, shared: Shared): {
           // toward the belly
           vec3 gold = mix(uHueA, uHueB, warm * 0.55);
           float dorsum = smoothstep(-0.55, 0.85, lp.y / max(0.001, uLen * 0.105));
-          gold = mix(gold * 0.96, gold * vec3(0.90, 0.74, 0.52), dorsum);
+          gold = mix(gold, gold * vec3(0.86, 0.46, 0.30), dorsum * 0.85);
+          // and the very top edge darkens slightly, the way a fish seen from the
+          // side always does where the back curves away
+          gold *= mix(1.0, 0.93, dorsum);
           col = gold;
         }
 
         // belly: a low, narrow band; gated on height so it cannot climb the
-        // head where the surface normals point sideways
+        // head where the surface normals point sideways.
+        //
+        // The koi used to get only a third of this mix (the 1 - uKoi*0.55 factor),
+        // which left it uniformly orange. The reference photo has a clearly pale
+        // underside running from the chin to the peduncle, so the koi now gets
+        // nearly the full blend.
         float belly = smoothstep(0.30, 0.92, -up / max(0.001, uLen * 0.20))
                     * smoothstep(0.80, 0.30, along);
-        col = mix(col, uBelly, belly * 0.80 * (1.0 - uKoi * 0.55));
+        col = mix(col, uBelly, belly * mix(0.80, 0.95, uKoi));
 
         // ---- oranda wen
         // A multiplicative term driven by noise was darkening whole patches of
@@ -1038,7 +1053,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
           //     undefined in GLSL ES 1.0.
           float e = d / 0.012;
           float seam = exp(-e * e) * onFlank;
-          col = mix(col, col * 0.78, seam * 0.95);
+          col = mix(col, col * 0.90, seam * 0.85);
 
           // (3) a thin highlight riding just inside the seam — the lifted rim
           //     catching light, which is what makes a gill cover read as a
@@ -1046,6 +1061,35 @@ export function makeFish(style: FishStyle, shared: Shared): {
           float r2 = (d - 0.014) / 0.010;
           float rim = exp(-r2 * r2) * onFlank;
           col = mix(col, col * 1.045, rim * 0.7);
+
+          // (4) ACTUAL relief.
+          //
+          // Albedo alone was not enough: a plate drawn only in colour reads as a
+          // smudge, because nothing in the lighting changes across it. The plate
+          // is given a slope here instead — sampled either side of the pixel
+          // along the body and differentiated, exactly like a height field — and
+          // the shading normal is tilted by it. Nothing moves in the geometry,
+          // so bodyNormal()'s finite difference never sees a curvature break.
+          //
+          // pow() is undefined for a negative base in GLSL ES 1.0, so the
+          // Gaussians are written as x*x.
+          float eA = 0.005;
+          float dA = (along - eA) - gillLine;
+          float dB = (along + eA) - gillLine;
+          float hA = smoothstep(0.0, 0.030, dA) * smoothstep(0.105, 0.020, dA);
+          float hB = smoothstep(0.0, 0.030, dB) * smoothstep(0.105, 0.020, dB);
+          float qA = dA / 0.008; float qB = dB / 0.008;
+          float sA = exp(-qA * qA);
+          float sB = exp(-qB * qB);
+          // plate rises, then a dip at the seam, then drops away behind it
+          float pA = hA * 0.009 - sA * 0.007;
+          float pB = hB * 0.009 - sB * 0.007;
+          float dh = (pB - pA) / (2.0 * eA);
+
+          vec3 hintA = abs(N.y) > 0.92 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
+          vec3 Ta = normalize(cross(N, hintA) + 1e-4);   // around the body
+          vec3 Ba = normalize(cross(N, Ta));             // along the body
+          N = normalize(N + Ba * dh * onFlank * 0.75);
         }
 
         // ---- scale relief, from the baked normal map. Nothing is
@@ -1130,7 +1174,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
         // 60 cycles across the span, not 150.
         // At 150 the ray pattern was finer than the cloth mesh (46 columns), so it
         // aliased into a ragged, scalloped trailing edge.
-        float rays = 0.5 + 0.5 * sin(vUv.x * 60.0);
+        float rays = 0.5 + 0.5 * sin(vUv.x * 28.0);
         rays = mix(0.65, 1.0, rays);
         // the membrane thins toward the trailing edge
         float thin = smoothstep(0.05, 0.95, vUv.y);
@@ -1144,7 +1188,13 @@ export function makeFish(style: FishStyle, shared: Shared): {
         // the skin — another source of the "deep mark" look at every fin base.
         float rootBlend = 1.0 - smoothstep(0.0, 0.45, vUv.y);
         vec3 base = mix(uFinTint, bodyCol, rootBlend * 0.85);
-        base *= (0.55 + 0.45 * rays) * (1.0 - 0.22 * thin);
+        base *= (0.60 + 0.40 * rays);
+        // The reference fin is translucent: the membrane thins toward the
+        // trailing edge and reads almost white, not darker. Fading toward a pale
+        // tint here is what stops the fins looking like painted card.
+        // Rays stay readable all the way to the trailing edge: they are the fin's
+        // structure, and washing them out left a flat pale shape.
+        base = mix(base, vec3(0.94, 0.93, 0.88), thin * 0.22);
 
         vec3 N = normalize(vNormal);
         vec3 V = normalize(cameraPosition - vWorld);
