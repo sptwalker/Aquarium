@@ -220,9 +220,9 @@ const STYLES: Record<FishSpecies, FishStyle> = {
   // slightly deeper orange along the back, pale fins, four barbels.
   koi: {
     length: 1.45, depth: 0.165, width: 0.072, profile: PROFILE_KOI,
-    hueA: new THREE.Vector3(1.00, 0.62, 0.06),    // golden ground
-    hueB: new THREE.Vector3(0.96, 0.42, 0.03),    // deeper orange on the back
-    belly: new THREE.Vector3(1.00, 0.90, 0.62),   // pale gold underside
+    hueA: new THREE.Vector3(1.00, 0.45, 0.05),    // orange-red ground
+    hueB: new THREE.Vector3(0.88, 0.19, 0.02),    // deeper red along the back
+    belly: new THREE.Vector3(1.00, 0.95, 0.86),   // pale, almost white underside
     finTint: new THREE.Vector3(1.00, 0.72, 0.26),
     wen: 0.0, koi: 1.0, barbels: 1,
   },
@@ -947,33 +947,33 @@ export function makeFish(style: FishStyle, shared: Shared): {
         // Those two ramps are vertical boundaries where the skin changes from
         // smooth to scaled, and at the relief strength being used they read as
         // the two dark bands reported on the front of the body — plus a bright
-        // scale-less "collar" just ahead of the tail, which is why the body
-        // looked like it never narrowed into it. Both ramps are now spread over
-        // a third of the body, and the tail end extends far enough back that no
-        // smooth patch survives in front of the caudal root.
-        // Scales cover the WHOLE body, with no zone at all.
+        // ---- where the scales stop.
         //
-        // The relief darkens the surface slightly on average (bumps facing away
-        // from the light), so any region that has scales is a shade darker than
-        // one that does not. That difference is what produced the two dark
-        // vertical marks: not the steepness of the fade — a third of the body
-        // long fade was still a visible band — but the fact that a boundary
-        // existed. Removing the zone removes the boundary, so the only fade left
-        // is at the very tip of the snout.
-        float scaleZone = smoothstep(0.0, 0.03, along);
+        // From the reference photo: the head is bare skin from the snout back to
+        // the operculum, and the scales begin immediately behind the gill cover —
+        // about a fifth of the way along the body. along is 1 at the nose, so
+        // the boundary sits at 0.78 and the zone is 1 below it.
+        //
+        // A boundary here is what produced the "two dark marks" in earlier
+        // rounds: shaded relief makes scaled skin a shade darker on average than
+        // bare skin, so any edge between the two is visible however gradual the
+        // fade. The fix is not to hide the boundary but to cancel its brightness
+        // step — see the compensation just below.
+        float scaleZone = 1.0 - smoothstep(0.760, 0.815, along);
+        scaleZone *= 1.0 - smoothstep(0.995, 1.0, along);
 
         float scaleH;                       // filled in by applyScaleNormal
-        // The height map darkens the trough where one scale slips under the next.
-        // Kept shallow: the reference has a soft relief, and a strong value step
-        // made the flank look like hexagonal tiles.
         {
-          // Height modulates the albedo only where the scales are, and the
-          // modulation is written so that scaleZone = 0 yields exactly 1.0 —
-          // no step when the zone fades out. The previous mix(0.975, 1.012, …)
-          // changed the base brightness by 3.7% between inside and outside the
-          // zone, which drew its own faint band where the zone faded.
           float th = texture2D(uScaleHeight, scaleUV()).r;
+          // (a) the relief's own albedo variation, centred on zero
           col *= 1.0 + (th - 0.5) * 0.05 * scaleZone;
+          // (b) and the MEAN darkening the relief causes, put back.
+          //
+          // The normal map tilts normals away from the light on roughly half of
+          // every scale, so the scaled region comes out a few percent darker in
+          // aggregate. Adding that back makes scaled skin and bare skin the same
+          // average brightness, so the zone edge carries no step at all.
+          col *= 1.0 + 0.055 * scaleZone;
         }
 
         // ---- mouth cleft: the dark inside of the notch cut in bodySurface().
@@ -1008,35 +1008,44 @@ export function makeFish(style: FishStyle, shared: Shared): {
 
         // ---- operculum (gill cover).
         //
-        // ONE soft crescent, and nothing else.
+        // The reference photo shows this clearly: a plate covering the gills,
+        // bounded behind by an arc — nearly vertical on the upper flank, curving
+        // forward as it descends — with a crisp seam where the free edge lifts
+        // away from the body, and a slightly lighter, waxy skin over the plate.
         //
-        // The previous version layered four effects into the same few percent of
-        // body length: a 0.93 plate, a 0.72 slit drawn with a 1.1%-wide
-        // smoothstep (a near-hard line), a 1.10 bright edge, and — separately —
-        // a geometric bump and an albedo ramp from the scale zone. Each is a
-        // band; stacked they read as the two dark marks that kept being
-        // reported. A gill cover should be a soft shading break with no line in
-        // it at all, so this is now a single gradient with one weak highlight.
+        // It is drawn entirely in the shader. A geometric bump was tried and
+        // removed: any displacement here turns into a curvature break that
+        // bodyNormal() renders as a hard ring, and the plate needs to be a mark
+        // on the skin, not a ridge.
+        //
+        // The plate also masks the scale zone: the gill cover carries no scales,
+        // which is why scaleZone is cut off at this same ordinate.
         {
           float ay = lp.y / max(0.001, uLen * 0.135);   // -1 belly .. +1 back
-          // Slightly curved edge, softer toward the belly.
-          float gillLine = 0.800 - 0.020 * ay * ay;
-          float d = along - gillLine;
-          float onFlank = smoothstep(1.05, 0.30, abs(ay));
+          // The rear edge. Quadratic in height so it bulges backward at mid
+          // flank and tucks forward toward the belly — the arc the photo shows.
+          float gillLine = 0.760 - 0.050 * ay * ay + 0.018 * ay;
+          float d = along - gillLine;                   // >0 toward the snout
+          float onFlank = smoothstep(1.10, 0.25, abs(ay));
 
-          // A wide, gentle darkening ahead of the opening, fading out over 18%
-          // of body length. No narrow term, so there is nothing that can read
-          // as a line or a crease.
-          float cover = smoothstep(0.18, 0.0, d) * smoothstep(-0.06, 0.02, d);
-          col = mix(col, col * 0.955, cover * onFlank * 0.9);
+          // (1) the plate itself: bare, slightly paler skin
+          float plate = smoothstep(0.0, 0.045, d) * onFlank;
+          col = mix(col, col * vec3(1.085, 1.050, 1.020), plate * 0.9);
 
-          // The free edge catches a touch of light — a low-contrast ridge, not
-          // an outline. Written as x*x because pow() is undefined for a
-          // negative base in GLSL ES 1.0, and a shader compile error here makes
-          // the whole body disappear.
-          float dd = (d - 0.005) / 0.022;
-          float rim = exp(-dd * dd) * onFlank;
-          col = mix(col, col * 1.035, rim * 0.6);
+          // (2) the free edge: a soft dark seam just behind the plate. Width
+          //     ~1.5% of body length — readable at normal distance, not a
+          //     scribble. Written as x*x because pow() of a negative base is
+          //     undefined in GLSL ES 1.0.
+          float e = d / 0.012;
+          float seam = exp(-e * e) * onFlank;
+          col = mix(col, col * 0.78, seam * 0.95);
+
+          // (3) a thin highlight riding just inside the seam — the lifted rim
+          //     catching light, which is what makes a gill cover read as a
+          //     separate plate rather than a painted stripe.
+          float r2 = (d - 0.014) / 0.010;
+          float rim = exp(-r2 * r2) * onFlank;
+          col = mix(col, col * 1.045, rim * 0.7);
         }
 
         // ---- scale relief, from the baked normal map. Nothing is
@@ -1310,7 +1319,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
   const eyeAngle = Math.PI * 0.13;
   // Real goldfish eyes are prominent — roughly 6-7% of body length across.
   // The 0.021 value read as beads, so this is closer to life.
-  const eyeR = style.length * 0.030;
+  const eyeR = style.length * 0.042;
   const eyeGeo = new THREE.SphereGeometry(eyeR, 24, 18);
   // Each eye gets its own material so it can carry its outward gaze direction.
   // The old shader derived the pupil direction from sign(N.x) of the sphere's
