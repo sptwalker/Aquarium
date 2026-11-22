@@ -76,40 +76,45 @@ const PROFILE_GOLDFISH: Profile = [
  * is the view the user is comparing against.
  */
 const PROFILE_KOI: Profile = [
-  // The last 3% necks down so the body's end cap is small; the caudal fin
-  // roots at z=-0.5L, so a full-radius cap there would show as a stump.
-  [0.000, 0.120],
-  [0.012, 0.235],
-  [0.030, 0.328],
-  [0.060, 0.388],
-  [0.090, 0.462],
-  [0.120, 0.534],
-  [0.160, 0.615],
-  [0.200, 0.685],
-  [0.250, 0.773],
-  [0.300, 0.837],
-  [0.350, 0.881],
-  [0.400, 0.933],
-  [0.450, 0.982],
+  // The last 2% necks down; the caudal fin roots just ahead of here, at a
+  // station where the body still has depth, so the two meet along a line and
+  // the fin fans out from the peduncle rather than from a point.
+  [0.000, 0.150],
+  [0.008, 0.300],
+  [0.020, 0.392],
+  [0.030, 0.407],
+  [0.060, 0.421],
+  [0.090, 0.441],
+  [0.120, 0.469],
+  [0.160, 0.528],
+  [0.200, 0.608],
+  [0.250, 0.717],
+  [0.300, 0.813],
+  [0.350, 0.888],
+  [0.400, 0.946],
+  [0.450, 0.985],
   [0.500, 1.000],
-  [0.550, 0.985],
-  [0.600, 0.946],
-  [0.650, 0.888],
-  [0.700, 0.813],
-  [0.750, 0.717],
-  [0.790, 0.630],
-  [0.830, 0.546],
-  [0.860, 0.495],
-  [0.890, 0.458],
-  [0.915, 0.437],
+  [0.550, 0.982],
+  [0.600, 0.933],
+  [0.650, 0.881],
+  [0.700, 0.837],
+  [0.750, 0.773],
+  [0.790, 0.703],
+  [0.830, 0.633],
+  [0.860, 0.577],
+  [0.890, 0.511],
+  [0.915, 0.449],
   // The trace's final columns include the mouth and lip strokes, so the fitted
-  // half-depth there is 0.40 — a blunt nose. The drawing's muzzle does close to
-  // a point, so the last 6% is tapered to one by hand.
-  [0.940, 0.360],
-  [0.960, 0.280],
-  [0.976, 0.185],
-  [0.990, 0.100],
-  [1.000, 0.045],
+  // half-depth plateaus at 0.29 instead of closing. The drawing's muzzle tapers
+  // to a point over roughly the last 7%, and this is that taper: it stays full
+  // through the eye and then converges smoothly.
+  [0.930, 0.415],
+  [0.948, 0.330],
+  [0.962, 0.245],
+  [0.975, 0.160],
+  [0.986, 0.092],
+  [0.994, 0.045],
+  [1.000, 0.018],
 ];
 
 /**
@@ -149,33 +154,33 @@ const WIDTH_KOI: Profile = [
 
 const AXIS_KOI: Profile = [
   [0.000, 0.000],
-  [0.030, -0.010],
-  [0.060, -0.023],
-  [0.090, -0.031],
-  [0.120, -0.028],
-  [0.160, -0.006],
-  [0.200, 0.017],
-  [0.250, 0.027],
-  [0.300, 0.034],
-  [0.350, 0.036],
-  [0.400, 0.006],
-  [0.450, -0.041],
-  [0.500, -0.077],
-  [0.550, -0.103],
-  [0.600, -0.125],
-  [0.650, -0.147],
-  [0.700, -0.168],
-  [0.750, -0.182],
-  [0.790, -0.183],
-  [0.830, -0.172],
-  [0.860, -0.158],
-  [0.890, -0.144],
-  [0.915, -0.134],
-  [0.940, -0.128],
-  [0.960, -0.125],
-  [0.976, -0.123],
-  [0.990, -0.123],
-  [1.000, -0.122],
+  [0.030, -0.001],
+  [0.060, -0.005],
+  [0.090, -0.014],
+  [0.120, -0.026],
+  [0.160, -0.045],
+  [0.200, -0.058],
+  [0.250, -0.060],
+  [0.300, -0.046],
+  [0.350, -0.024],
+  [0.400, -0.003],
+  [0.450, 0.019],
+  [0.500, 0.045],
+  [0.550, 0.082],
+  [0.600, 0.128],
+  [0.650, 0.158],
+  [0.700, 0.156],
+  [0.750, 0.150],
+  [0.790, 0.143],
+  [0.830, 0.123],
+  [0.860, 0.103],
+  [0.890, 0.092],
+  [0.915, 0.092],
+  [0.940, 0.100],
+  [0.960, 0.108],
+  [0.976, 0.114],
+  [0.990, 0.119],
+  [1.000, 0.122],
 ];
 
 const STYLES: Record<FishSpecies, FishStyle> = {
@@ -352,7 +357,12 @@ function bodySurface(style: FishStyle, t: number, angle: number): THREE.Vector3 
   // 2. WIDTH_KOI is notched near the tip so the plan view stays wide there
   //    without needing an exception.
   const widthMul = style.koi > 0.5 ? smoothProfile(WIDTH_KOI, t) : 1;
-  const tipFloor = 0.20 * THREE.MathUtils.smoothstep(t, 0.93, 1.0);
+  // The floor keeps a little width at the tip so the mouth has a face. Fancy
+  // goldfish genuinely have blunt heads, so they keep the wide floor; the koi's
+  // muzzle is a taper, and at 0.20 the floor turned it into a flat vertical blade
+  // — the "blunt head" that kept being reported.
+  const tipFloor = (style.koi > 0.5 ? 0.09 * THREE.MathUtils.smoothstep(t, 0.95, 1.0)
+    : 0.20 * THREE.MathUtils.smoothstep(t, 0.93, 1.0));
   const rX = Math.sqrt(r * r + tipFloor * tipFloor) * widthMul;
 
   return new THREE.Vector3(
@@ -679,43 +689,37 @@ function buildTailCloth(style: FishStyle): FinCloth {
       // LINEAR in |s| for the koi: the trailing edge is then a straight-sided V.
       // A power above 1 is flat near s = 0, which gives the notch a flat floor
       // and square shoulders — the "rectangular hole" it kept reading as.
-      const notch = style.koi > 0.5
-        ? 0.10 + 0.90 * Math.pow(as, 0.85)
-        : 1 - 0.55 * Math.exp(-s * s * 3.2);
-      // Lobe outline.
+      // ---- caudal fin outline.
       //
-      // This must never reach ZERO at the outer column. When it did, the last
-      // two columns of the mesh collapsed onto the same line — same y, different
-      // z — so the membrane folded back on itself there and rendered as a black
-      // slit down the middle of the fin. Stopping at 0.16 keeps a real edge on
-      // the last column and the taper still reads as a point.
-      const tip = 0.02 + 0.98 * Math.pow(Math.max(0, 1 - Math.pow(as, 2.2)), 0.55);
-      // The fin's root must sit at the body's ACTUAL end, AND span it.
+      // What the reference shows: the body necks down to a peduncle and the fin
+      // opens out from it as a FAN, with a shallow notch at the trailing edge —
+      // a slight Y, not a split.
       //
-      // Two separate errors used to live here. The root started at z = -0.46L
-      // while the body runs to -0.5L, so a stub of body protruded behind the
-      // fin. And every d = 0 vertex collapsed onto a single point, so a body
-      // ending in a rounded cap met a fin starting from a dot — the blunt knob
-      // that kept being reported as "the tail has not narrowed".
-      //
-      // The root row now spans the peduncle: at d = 0 the fin is a vertical line
-      // exactly as tall as the body's end cross-section, so the two meet along a
-      // line and the silhouette necks straight into the fin.
-      // The root row sits 2% FORWARD of the body's tip, at the station where
-      // the body is exactly rootHalf deep, and the body carries on tapering to
-      // almost nothing behind it. That last sliver is hidden behind the fin's
-      // membrane, so the silhouette reads as body-blending-into-fin instead of
-      // body-then-a-vertical-cut.
-      // Root at a POINT for every species.
-      //
-      // Spanning the root across the peduncle was meant to blend body into fin,
-      // but a tall root row extruded backward is a cone — which is exactly the
-      // "fin is a split tube" report. A real caudal fin is a membrane that
-      // starts at the peduncle's end and fans out behind it.
-      const z = -L * 0.5 - d * span * notch;
-      const lobeHalf = L * 0.34 * tip;
-      const y = s * lobeHalf * Math.pow(d, 0.85);
-      const x = s * d * L * 0.070 * tip + d * d * Math.cos(s * 1.9) * L * 0.040;
+      // Two structural things had to change to get there. The root row spans the
+      // whole peduncle rather than collapsing to a point, so the fin grows out of
+      // the body instead of being attached at a dot. And the lateral term is
+      // nearly removed: it used to scale with s (a trumpeting cone, which is what
+      // read as a "tube"), leaving only a slight symmetric cupping.
+      let z: number, y: number, x: number;
+      if (style.koi > 0.5) {
+        const rootHalf = 0.38 * style.depth * L;     // matches the peduncle
+        const lobeHalf = L * 0.265;
+        // Shallow V: 80% of full depth at the centre, full depth at the tips.
+        // Anything deeper reads as a fin that has been cut open.
+        const notch = 0.80 + 0.20 * as;
+        const half = rootHalf * (1 - d) + lobeHalf * Math.pow(d, 0.80);
+        z = -L * 0.49 - d * span * notch;
+        y = s * half;
+        x = d * d * Math.cos(s * 1.9) * L * 0.018;
+      } else {
+        // Fancy goldfish keep their deep, soft fan.
+        const notch = 1 - 0.55 * Math.exp(-s * s * 3.2);
+        const tip = 0.02 + 0.98 * Math.pow(Math.max(0, 1 - Math.pow(as, 2.2)), 0.55);
+        z = -L * 0.5 - d * span * notch;
+        const lobeHalf = L * 0.34 * tip;
+        y = s * lobeHalf * Math.pow(d, 0.85);
+        x = s * d * L * 0.070 * tip + d * d * Math.cos(s * 1.9) * L * 0.040;
+      }
       const o = (i * rows + j) * 3;
       rest[o] = x;
       rest[o + 1] = y;
@@ -1114,7 +1118,10 @@ export function makeFish(style: FishStyle, shared: Shared): {
       varying vec3 vNormal;
       void main(){
         // rays run root -> tip; they give the membrane its structure
-        float rays = 0.5 + 0.5 * sin(vUv.x * 150.0);
+        // 60 cycles across the span, not 150.
+        // At 150 the ray pattern was finer than the cloth mesh (46 columns), so it
+        // aliased into a ragged, scalloped trailing edge.
+        float rays = 0.5 + 0.5 * sin(vUv.x * 60.0);
         rays = mix(0.65, 1.0, rays);
         // the membrane thins toward the trailing edge
         float thin = smoothstep(0.05, 0.95, vUv.y);

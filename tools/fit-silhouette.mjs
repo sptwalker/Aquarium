@@ -65,10 +65,11 @@ const STATIONS = [
 ];
 
 // Units: pixels for now; normalise so the deepest half-depth is 1.
-const samples = STATIONS.map((t) => {
-  const u = 1 - t;
-  return { t, back: at(back, u), belly: at(belly, u) };
-});
+// The trace's u is 1 at the NOSE and 0 at the tail; fish.ts's t is 1 at the
+// nose and 0 at the tail. They run the same way, so u = t. Writing 1 - t here
+// mirrored the tables end-for-end, which is why the back's highest point and the
+// belly's lowest point came out swapped relative to the reference.
+const samples = STATIONS.map((t) => ({ t, back: at(back, t), belly: at(belly, t) }));
 const halfAt = (s) => (s.back - s.belly) / 2;
 const maxHalf = Math.max(...samples.map(halfAt));
 
