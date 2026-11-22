@@ -27,9 +27,9 @@ function smooth(K, t) {
     + (-p0 + 3 * p1 - 3 * p2 + p3) * s3);
 }
 
-const BUMP_T = 0.32;   // where the bulge is centred (t from the tail)
-const BUMP_W = 0.13;   // its width
-const BUMP_A = 0.26;   // its height
+const BUMP_T = 0.44;   // where the bulge is centred (t from the tail)
+const BUMP_W = 0.20;   // its width
+const BUMP_A = 0.30;   // its height
 
 const STATIONS = [0.000, 0.030, 0.060, 0.090, 0.120, 0.160, 0.200, 0.250, 0.300,
   0.350, 0.400, 0.450, 0.500, 0.550, 0.600, 0.650, 0.700, 0.750, 0.790, 0.830,

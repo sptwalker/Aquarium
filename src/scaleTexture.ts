@@ -24,14 +24,14 @@ const TILE = 512;
 // scale, and that parity has to match across the wrap or the pattern steps at
 // the tile boundary — an odd count put a hard vertical line down the flank at
 // exactly the seam column.
-const COLS = 16;  // scales around the body — the WHOLE body, one tile
-const ROWS = 32;  // scale rows along the body — one tile
+const COLS = 13;  // scales around the body — the WHOLE body, one tile
+const ROWS = 24;  // scale rows along the body — one tile
 
 /** Half-width / half-height of one scale, in lattice cells. */
 const RX = 0.95;
 const RY = 0.72;
 /** How much a scale narrows toward its buried end (0 = ellipse). */
-const FAN = 0.55;
+const FAN = 0.34;
 
 /**
  * Height of the shingle at tile uv, in [0,1].
@@ -57,26 +57,20 @@ function heightAt(u: number, v: number): number {
   const bx = Math.floor(gu);
   const by = Math.floor(gv);
 
-  // ---- smooth union of the neighbouring scales (Lp norm).
+  // ---- soft-max over scales, with a row bias.
   //
-  // Every previous version asked "which scale owns this point" and took that
-  // one's height. That is a winner-take-all rule, and wherever the winner
-  // changes the field has a step — a cliff that `bodyNormal()` differentiates
-  // into a hard band. Moving the switch point (nearest centre, smooth-max,
-  // zero-at-edge cells) only relocated the cliff; it was never removed.
-  //
-  // The fix is to stop choosing. Each scale contributes a height, the heights
-  // are combined with an Lp norm, and the result varies continuously across the
-  // whole neighbourhood. No single scale can own a point, so no ownership
-  // boundary exists to be visible.
-  //
-  // p controls the shape of the union. At p = 6 the norm behaves very much like
-  // a max: each scale keeps a flat top and a crisp rim, and the result reads as
-  // armour plating. Real scales are rounded domes whose edges sink under their
-  // neighbours, so p is now 3 — still shingled, but with the crown falling away
-  // smoothly instead of ending at a lip.
-  const P = 4;
-  let acc = 0;
+  // Three approaches have been tried here. A plain max keeps crisp shingles but
+  // steps wherever the winner changes, and those steps line up into trenches.
+  // A pure Lp union is smooth but forgets that rows overlap FRONT TO BACK, so
+  // what survives is only the column structure — the flank turns into vertical
+  // streaks. This is a softmax weighted by (height + row bias): smooth
+  // everywhere, because a softmax is continuous in its inputs, while the bias
+  // makes a nearer row win even when the far one is slightly taller, which is
+  // what produces overlapping tiles.
+  const K = 11;      // sharpness of the softmax
+  const ROW_BIAS = 0.16;   // per row of depth; sets how strongly rows stack
+  let num = 0;
+  let den = 0;
 
   for (let dy = -2; dy <= 2; dy++) {
     for (let dx = -2; dx <= 2; dx++) {
@@ -92,8 +86,7 @@ function heightAt(u: number, v: number): number {
       if (ddx < -COLS * 0.5) ddx += COLS;
 
       // Fan flares toward -v, i.e. toward the tail once this is laid on the
-      // body (uv.y grows toward the snout). The scale is narrow where the row
-      // above buries it and wide at the free rim that overhangs the row behind.
+      // body. Narrow where the row above buries it, wide at the free rim.
       const along = Math.min(1, Math.max(0, (RY - ddy) / (2 * RY)));
       const width = RX * (1.0 - FAN + FAN * along * along);
       const nx = ddx / width;
@@ -101,14 +94,13 @@ function heightAt(u: number, v: number): number {
       const r2 = nx * nx + ny * ny;
       if (r2 >= 1) continue;
 
-      // Height of this scale's dome at the sample, with a small bias so a row
-      // lying toward the tail sits slightly proud of the one behind it — the
-      // overlap direction the drawing shows.
-      const h = Math.sqrt(1 - r2) * (1 + dy * 0.012);
-      acc += Math.pow(h, P);
+      const h = Math.sqrt(1 - r2);
+      const w = Math.exp(K * (h + dy * ROW_BIAS));
+      num += w * h;
+      den += w;
     }
   }
-  return Math.pow(acc, 1 / P);
+  return den > 0 ? num / den : 0;
 }
 
 function makeCanvas(): HTMLCanvasElement {
@@ -179,7 +171,7 @@ export function makeScaleMaps(): ScaleMaps {
   const nCanvas = makeCanvas();
   const nCtx = nCanvas.getContext('2d')!;
   const nImg = nCtx.createImageData(TILE, TILE);
-  const strength = 1.8;
+  const strength = 2.0;
   for (let y = 0; y < TILE; y++) {
     for (let x = 0; x < TILE; x++) {
       const hL = sample(x - 1, y);

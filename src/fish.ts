@@ -77,33 +77,33 @@ const PROFILE_GOLDFISH: Profile = [
  */
 const PROFILE_KOI: Profile = [
   [0.000, 0.133],
-  [0.030, 0.360],
-  [0.060, 0.375],
-  [0.090, 0.399],
-  [0.120, 0.435],
-  [0.160, 0.516],
-  [0.200, 0.634],
-  [0.250, 0.803],
-  [0.300, 0.940],
-  [0.350, 1.000],
-  [0.400, 0.991],
-  [0.450, 0.953],
-  [0.500, 0.915],
-  [0.550, 0.876],
-  [0.600, 0.825],
-  [0.650, 0.777],
-  [0.700, 0.738],
-  [0.750, 0.681],
-  [0.790, 0.620],
-  [0.830, 0.558],
-  [0.860, 0.509],
-  [0.890, 0.450],
-  [0.915, 0.396],
-  [0.940, 0.327],
-  [0.960, 0.227],
-  [0.976, 0.135],
-  [0.990, 0.058],
-  [1.000, 0.016],
+  [0.030, 0.304],
+  [0.060, 0.380],
+  [0.090, 0.377],
+  [0.120, 0.395],
+  [0.160, 0.428],
+  [0.200, 0.484],
+  [0.250, 0.587],
+  [0.300, 0.723],
+  [0.350, 0.860],
+  [0.400, 0.962],
+  [0.450, 1.000],
+  [0.500, 0.982],
+  [0.550, 0.906],
+  [0.600, 0.833],
+  [0.650, 0.756],
+  [0.700, 0.675],
+  [0.750, 0.605],
+  [0.790, 0.543],
+  [0.830, 0.470],
+  [0.860, 0.413],
+  [0.890, 0.358],
+  [0.915, 0.305],
+  [0.940, 0.249],
+  [0.960, 0.185],
+  [0.976, 0.110],
+  [0.990, 0.044],
+  [1.000, 0.010],
 ];
 
 /**
@@ -208,7 +208,7 @@ const STYLES: Record<FishSpecies, FishStyle> = {
   // Metallic gold carp, following the second reference: a warm golden body,
   // slightly deeper orange along the back, pale fins, four barbels.
   koi: {
-    length: 1.45, depth: 0.252, width: 0.072, profile: PROFILE_KOI,
+    length: 1.45, depth: 0.215, width: 0.072, profile: PROFILE_KOI,
     hueA: new THREE.Vector3(1.00, 0.45, 0.05),    // orange-red ground
     hueB: new THREE.Vector3(0.88, 0.19, 0.02),    // deeper red along the back
     belly: new THREE.Vector3(1.00, 0.95, 0.86),   // pale, almost white underside
@@ -700,7 +700,10 @@ function buildTailCloth(style: FishStyle): FinCloth {
       // read as a "tube"), leaving only a slight symmetric cupping.
       let z: number, y: number, x: number;
       if (style.koi > 0.5) {
-        const rootHalf = 0.38 * style.depth * L;     // matches the peduncle
+        // Root at a point. A root row spanning the whole peduncle extruded a
+        // tall edge backwards through the fin — literally a cone, which is the
+        // "tube" the tail kept reading as.
+        const rootHalf = 0;
         // Half the reference's total caudal height (0.376 body lengths)
         const lobeHalf = L * 0.215;
         // Shallow V: 80% of full depth at the centre, full depth at the tips.
@@ -1039,7 +1042,12 @@ export function makeFish(style: FishStyle, shared: Shared): {
           float ay = lp.y / max(0.001, uLen * 0.135);   // -1 belly .. +1 back
           // The rear edge. Quadratic in height so it bulges backward at mid
           // flank and tucks forward toward the belly — the arc the photo shows.
-          float gillLine = 0.760 - 0.050 * ay * ay + 0.018 * ay;
+          // NEGATIVE curvature, i.e. the edge is furthest BACK at mid-height.
+          // The operculum's free edge sweeps back across the middle of the flank
+          // and tucks forward again at the top and bottom. With a minus sign the
+          // edge bowed FORWARD at mid-flank — the shape was inside out, which is
+          // what read as a reversed gill.
+          float gillLine = 0.760 + 0.055 * ay * ay - 0.015 * ay;
           float d = along - gillLine;                   // >0 toward the snout
           float onFlank = smoothstep(1.10, 0.25, abs(ay));
 
@@ -1104,7 +1112,7 @@ export function makeFish(style: FishStyle, shared: Shared): {
         vec3 V0 = normalize(cameraPosition - vWorld);
         float facing = clamp(dot(normalize(vNormal), V0), 0.0, 1.0);
         {
-          N = applyScaleNormal(N, 0.20 * scaleZone * pow(facing, 1.35), scaleH);
+          N = applyScaleNormal(N, 0.22 * scaleZone * pow(facing, 1.25), scaleH);
         }
 
         // ---- lighting
@@ -1407,7 +1415,9 @@ export function makeFish(style: FishStyle, shared: Shared): {
           // the goldfish's dark eye has no visible sclera at all from outside.
           float sclera   = smoothstep(0.02, 0.16, facing);
           float irisBand = smoothstep(0.16, 0.30, facing);   // gold ring
-          float pupil    = smoothstep(0.42, 0.56, facing);   // big black disc
+          // A smaller pupil inside a wider gold iris, as in the photo. The
+          // previous threshold let black cover most of the visible eye.
+          float pupil    = smoothstep(0.62, 0.76, facing);
 
           vec3 c = vec3(0.46, 0.36, 0.22);                   // rim, warm not white
           c = mix(c, vec3(0.80, 0.56, 0.12), irisBand);       // iris gold
